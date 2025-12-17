@@ -1,5 +1,5 @@
 # Quick Reference Card
-## main.py - Python-to-C Transpiler v6.0.0
+## Python-to-C Transpiler v6.0.0
 
 ---
 
@@ -458,7 +458,7 @@ cat CHANGELOG.md
 ## What's New in v6.0.0
 
 ### Fixed
-- ✅ **VM Now Works** (was disabled)
+- ✅ **VM Now Works**
 - ✅ **30+ VM Opcodes** (was 11)
 - ✅ **Variable Bug Fixed** (no more redeclaration)
 

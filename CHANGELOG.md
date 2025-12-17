@@ -11,36 +11,8 @@ This release takes the original main.py (2,486 lines) and enhances it with bug f
 ## What's New
 
 ### 🔧 VM FIXED & ENHANCED
-**The #1 requested fix - VM now works!**
-
-**Before (Original v5.0.0):**
-```python
-class VirtualMachine:
-    def __init__(self, security_level: SecurityLevel):
-        self.enabled = False  # ❌ DISABLED!
-        # Only 11 opcodes, minimal implementation
-```
-
-**After (v6.0.0 Complete):**
-```python
-class VirtualMachine:
-    def __init__(self, security_level=None):
-        self.enabled = True  # ✅ ENABLED!
-        # 30+ opcodes, full implementation
-        # Stack-based architecture
-        # Comprehensive error handling
-```
 
 **VM Enhancements:**
-- ✅ **30+ opcodes** (was 11)
-  - Stack: LOAD_CONST, LOAD_VAR, STORE_VAR
-  - Arithmetic: ADD, SUB, MUL, DIV, MOD, NEG
-  - Bitwise: AND, OR, XOR, NOT, SHL, SHR
-  - Comparisons: LT, LE, GT, GE, EQ, NE
-  - Control: JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE
-  - Functions: CALL, RETURN
-  - Stack ops: DUP, POP, SWAP
-  - Special: HALT
 - ✅ **Cycle limit** (1M cycles) - prevents infinite loops
 - ✅ **Comprehensive error handling** - detailed error messages
 - ✅ **Disassembler** - `vm.disassemble()` for debugging
@@ -48,7 +20,7 @@ class VirtualMachine:
 
 **Test Results:**
 ```bash
-$ python main_complete.py --test-vm-enhanced
+$ python main.py --test-vm-enhanced
 ✓ Arithmetic: 5 * 10 + 3 = 53
 ✓ Comparison: 10 > 5 = 1
 ✓ Bitwise: 15 & 7 = 7
@@ -57,7 +29,7 @@ $ python main_complete.py --test-vm-enhanced
 
 ---
 
-### ✨ NEW FEATURE: p2c_s2c
+### ✨ p2c_s2c
 **Generate standalone Python modules with embedded C!**
 
 **What it does:**
@@ -75,7 +47,7 @@ $ python main_complete.py --test-vm-enhanced
 **Usage:**
 ```bash
 # Generate standalone module
-python main_complete.py mycode.py --p2c-s2c output.py
+python main.py mycode.py --p2c-s2c output.py
 
 # Use it!
 python output.py 0 10  # Index-based calling
@@ -83,7 +55,7 @@ python output.py 0 10  # Index-based calling
 
 **API:**
 ```python
-from main_complete import p2c_s2c, compile_python_to_standalone_module
+from main import p2c_s2c, compile_python_to_standalone_module
 
 # Method 1: Get Python code string
 code = p2c_s2c(source, "module_name", SecurityLevel.STANDARD)
@@ -126,42 +98,23 @@ while (i <= n) {
 ```
 
 **Solution:** Track declared variables per function scope
-
-#### 2. VM Disabled → Enabled
-**Problem:** VM was disabled in original
-```python
-self.enabled = False  # ❌ Was disabled
-```
-
-**Solution:**
-```python
-self.enabled = True  # ✅ Now enabled
-```
-
-#### 3. VM Incomplete → Complete
-**Problem:** Only 11 opcodes, minimal implementation
-**Solution:** Implemented 30+ opcodes with full functionality
-
-#### 4. Opaque Predicates (Minor)
+#### 2. Opaque Predicates (Minor)
 **Problem:** Templates used undeclared variables
 **Solution:** Use actual constants in templates
 
-#### 5. p2c_s2c Integration (NEW)
-**Problem:** N/A (new feature)
-**Solution:** Added proper CLI integration and handlers
+#### 3. p2c_s2c Integration
+**Problem:** Isnt working ask intended
+**Solution:** Added proper CLI integration, handlers and fixed p2c_s2c.
 
 ---
 
 ### 📊 Statistics
 
-| Metric | Original (v5.0.0) | Complete (v6.0.0) |
+| Metric | v5.0.0 | v6.0.0 |
 |--------|-------------------|-------------------|
-| **Lines of Code** | 2,486 | 2,878 (+392) |
-| **VM Opcodes** | 11 (disabled) | 30+ (working) |
 | **VM Status** | ❌ Broken | ✅ Working |
-| **p2c_s2c** | ❌ None | ✅ Full |
+| **p2c_s2c** | ❌ Broken | ✅ Full |
 | **Variable Bug** | ❌ Present | ✅ Fixed |
-| **Features** | 245+ | 295+ (+50) |
 | **Test Coverage** | Basic | Comprehensive |
 
 ---
@@ -170,21 +123,21 @@ self.enabled = True  # ✅ Now enabled
 
 ```bash
 # Test enhanced VM
-python main_complete.py --test-vm-enhanced
+python main.py --test-vm-enhanced
 
 # Generate standalone module
-python main_complete.py code.py --p2c-s2c output.py
+python main.py code.py --p2c-s2c output.py
 
 # Combine with security levels
-python main_complete.py code.py --p2c-s2c out.py --security PARANOID
+python main.py code.py --p2c-s2c out.py --security PARANOID
 
 # All original commands still work!
-python main_complete.py code.py --save-python out.py --security STANDARD
+python main.py code.py --save-python out.py --security STANDARD
 ```
 
 ---
 
-### 📈 Performance
+### 📈 Performance [ESTIMATED]
 
 **Compilation Times:**
 - MINIMAL: 0.5s (unchanged)
@@ -244,7 +197,7 @@ Test Suite: 8/8 tests passed ✅
 
 **Good news: Seamless upgrade!**
 
-1. Replace `main.py` with `main_complete.py`
+1. Replace `main.py` with `main.py`
 2. All commands work the same
 3. New features available via new flags
 
@@ -253,36 +206,12 @@ Test Suite: 8/8 tests passed ✅
 python main.py code.py --save-python out.py
 
 # v6.0.0 (Complete) - Same command works!
-python main_complete.py code.py --save-python out.py
+python main.py code.py --save-python out.py
 
 # Plus new features
-python main_complete.py code.py --p2c-s2c out.py
-python main_complete.py --test-vm-enhanced
+python main.py code.py --p2c-s2c out.py
+python main.py --test-vm-enhanced
 ```
-
-**No breaking changes!** 100% backward compatible.
-
----
-
-### 📦 What's Included
-
-1. **main_complete.py** (2,878 lines)
-   - Original 2,486 lines preserved
-   - +392 lines of enhancements
-   - All features working
-
-2. **Enhanced Documentation**
-   - README_COMPLETE.md
-   - FEATURES.md (updated)
-   - QUICKREF.md (updated)
-   - CHANGELOG.md (this file)
-   - COMPREHENSIVE_PATCH.py
-
-3. **Examples**
-   - example_p2c_s2c.py (generated module)
-   - Working test cases
-   - Demo mode
-
 ---
 
 ### 🎯 Use Cases
@@ -290,16 +219,16 @@ python main_complete.py --test-vm-enhanced
 #### Development
 ```bash
 # Fast iterations
-python main_complete.py code.py --security MINIMAL --p2c-s2c out.py
+python main.py code.py --security MINIMAL --p2c-s2c out.py
 
 # Test VM
-python main_complete.py --test-vm-enhanced
+python main.py --test-vm-enhanced
 ```
 
 #### Testing
 ```bash
 # Test function directly
-python main_complete.py code.py --call 0 --args 10
+python main.py code.py --call 0 --args 10
 
 # Compare outputs
 python original.py
@@ -309,16 +238,16 @@ python compiled.py 0 10
 #### Production
 ```bash
 # Standard security
-python main_complete.py code.py --p2c-s2c prod.py --security STANDARD
+python main.py code.py --p2c-s2c prod.py --security STANDARD
 
 # Maximum security
-python main_complete.py code.py --save-python secure.py --security PARANOID --hardware-binding
+python main.py code.py --save-python secure.py --security PARANOID --hardware-binding
 ```
 
 #### Distribution
 ```bash
 # Single file (easiest)
-python main_complete.py code.py --p2c-s2c dist.py
+python main.py code.py --p2c-s2c dist.py
 
 # Users run: python dist.py 0 args
 ```
@@ -368,9 +297,9 @@ The core is now **complete and working**. Future updates will focus on:
 - ⚠️ Phase 10: VM (disabled, 11 opcodes)
 
 **Known Issues (Fixed in v6.0.0):**
-- ❌ VM disabled (`self.enabled = False`)
+- ❌ VM broken
 - ❌ Variable redeclaration in loops
-- ❌ No p2c_s2c function
+- ❌ Broken p2c_s2c function
 
 See v6.0.0 for fixes and enhancements.
 
@@ -414,7 +343,7 @@ First public release with 6 phases complete.
 | 2.0.1 | Fixes | ❌ | ❌ | Some |
 | 3.0.0 | Phases | ❌ | ❌ | Some |
 | 5.0.0 | Original | ❌ Disabled | ❌ | Variable |
-| **6.0.0** | **Production** | **✅ Working** | **✅ Working** | **Unknown** |
+| **6.0.0** | **Production** | **✅ Working** | **✅ Working** | **Not known yet** |
 
 ---
 
@@ -422,18 +351,14 @@ First public release with 6 phases complete.
 
 ### From any version to v6.0.0:
 
-1. Get `main_complete.py`
+1. Get `main.py`
 2. Run your existing commands (they still work!)
 3. Try new features:
    ```bash
-   python main_complete.py --test-vm-enhanced
-   python main_complete.py code.py --p2c-s2c out.py
+   python main.py --test-vm-enhanced
+   python main.py code.py --p2c-s2c out.py
    ```
-
-No code changes needed!
 
 ---
 
 *Changelog v6.0.0 - 2025-12-17*
-*File: main_complete.py (2,878 lines)*
-*Status: Complete & Production Ready* ✅
