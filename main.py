@@ -2520,7 +2520,7 @@ def handle_p2c_s2c(args, py_source):
         return True
     return False
 
-def test_vm_enhanced():
+def test_vm():
     """Test enhanced VM"""
     print("="*70)
     print("Enhanced VM Test Suite")
@@ -2641,8 +2641,8 @@ def main():
         parser.print_help()
     
     # Handle --test-vm
-    if args.test_vm_enhanced:
-        test_vm_enhanced()
+    if args.test_vm:
+        test_vm()
         sys.exit(0)
     
 
