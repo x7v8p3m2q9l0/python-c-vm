@@ -18,29 +18,6 @@ python main.py --test-vm
 
 ---
 
-## 📊 Feature Comparison
-
-| Feature | Original | Complete (This File) |
-|---------|----------|----------------------|
-| **Lines of Code** | 2,486 | 2,878 (+392) |
-| **Variable Bug** | ✅ Fixed | ✅ Fixed |
-| **VM** | ⚠️ Disabled | ✅ WORKING (30 opcodes) |
-| **p2c_s2c** | ❌ | ✅ NEW |
-| **SecurityMonitor** | ✅ | ✅ |
-| **Anti-Debug** | ✅ | ✅ |
-| **Anti-VM** | ✅ | ✅ |
-| **Anti-Analysis** | ✅ | ✅ |
-| **MemoryLoader** | ✅ | ✅ |
-| **BinaryContainer** | ✅ | ✅ |
-| **Hardware Binding** | ✅ | ✅ |
-| **Control-Flow Obfuscation** | ✅ | ✅ |
-| **Data Obfuscation** | ✅ | ✅ |
-| **Python Obfuscation** | ✅ | ✅ |
-| **Security Levels** | ✅ 4 | ✅ 4 |
-| **Test Suite** | ⚠️ Basic | ✅ Enhanced |
-
----
-
 ## 🚀 Quick Start
 
 ### Basic Usage
