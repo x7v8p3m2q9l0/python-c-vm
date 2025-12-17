@@ -1,6 +1,11 @@
 # P2C
+<div align="center">
 
-## main.py - The Truly Ultimate Edition
+[🇻🇳 Tiếng Việt](#-phiên-bản-tiếng-việt) |
+[🇨🇳 中文](#-中文版本简体) |
+[🇺🇸 English](#p2c)
+
+</div>
 
 ## 🎯 What Was Done
 
@@ -291,7 +296,6 @@ python main.py algorithms.py \
 python main.py code.py --save-python lib.py
 python main.py code.py --save-bytes lib.bin
 python main.py code.py --call 0 --args 42
-python main.py code.py --show-c
 python main.py code.py --show-metadata
 ```
 
@@ -336,6 +340,8 @@ python main.py --test-vm
 python main.py mycode.py --p2c-s2c mylib.py --security STANDARD
 
 # Users can just run
+
+# P.S: Function indices correspond to function definition order in the source file (0-based).
 python mylib.py 0 args...
 
 # Single file, no C compiler needed!
@@ -348,6 +354,9 @@ python mylib.py 0 args...
 python generated.py 0 test_args
 
 # Compare with original
+
+# P.S: Function indices correspond to function definition order in the source file (0-based).
+
 python original.py  # Expected output
 python generated.py 0 args  # Should match
 ```
@@ -384,4 +393,313 @@ python main.py code.py --show-metadata
 ---
 ---
 =======
+---
+
+
+# P2C
+
+---
+
+# 🇻🇳 Phiên Bản Tiếng Việt
+
+## 🎯 Những Gì Đã Hoàn Thành
+
+### 1. Sửa lỗi VM ✅
+
+### 2. Thêm hàm p2c_s2c ✅
+
+### 3. Nâng cấp CLI ✅
+
+**Lệnh Mới:**
+
+```bash
+# Tạo module độc lập
+python main.py input.py --p2c-s2c output.py
+
+# Kiểm tra VM nâng cao
+python main.py --test-vm
+```
+
+---
+
+## 🚀 Bắt Đầu Nhanh
+
+### Cách Dùng Cơ Bản
+
+```bash
+# Tạo module Python độc lập
+python main.py input.py --save-python output.py
+
+# Với mức bảo mật
+python main.py input.py --save-python output.py --security PARANOID
+
+# Ràng buộc phần cứng
+python main.py input.py --save-python output.py --hardware-binding
+
+# Gọi hàm trực tiếp
+python main.py input.py --call 0 --args 10
+
+# Lưu dạng container nhị phân
+python main.py input.py --save-bytes output.bin
+```
+
+### Tính Năng Mới
+
+```bash
+# Tạo module độc lập bằng p2c_s2c
+python main.py input.py --p2c-s2c output.py
+
+# Kiểm tra VM
+python main.py --test-vm
+
+# Kết hợp tính năng
+python main.py input.py --p2c-s2c output.py --security AGGRESSIVE
+```
+
+---
+
+## 🧪 Kiểm Thử
+
+### Kiểm Thử VM
+
+```bash
+$ python main.py --test-vm
+
+======================================================================
+Enhanced VM Test Suite
+======================================================================
+
+[Test] Arithmetic: 5 * 10 + 3
+  ✓ Result: 53 (expected 53)
+
+[Test] Comparison: 10 > 5
+  ✓ Result: 1 (expected 1)
+
+[Test] Bitwise: 15 & 7
+  ✓ Result: 7 (expected 7)
+
+[Test] Conditional jump
+  ✓ Result: 100 (expected 100)
+
+======================================================================
+VM tests complete!
+======================================================================
+```
+
+### Kiểm Thử p2c_s2c
+
+```bash
+cat > test.py << 'EOF'
+def factorial(n):
+    result = 1
+    i = 2
+    while i <= n:
+        result = result * i
+        i = i + 1
+    return result
+EOF
+
+python main.py test.py --p2c-s2c factorial_compiled.py
+
+python factorial_compiled.py 0 10
+# Output: Result: 3628800
+```
+
+---
+
+## 📋 Điểm Mới
+
+### VM
+
+**Hơn 30 Opcode:**
+
+* Ngăn xếp: LOAD_CONST, LOAD_VAR, STORE_VAR
+* Số học: ADD, SUB, MUL, DIV, MOD, NEG
+* Bit: AND, OR, XOR, NOT, SHL, SHR
+* So sánh: LT, LE, GT, GE, EQ, NE
+* Điều khiển luồng: JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE
+* Hàm: CALL, RETURN
+* Ngăn xếp nâng cao: DUP, POP, SWAP
+* Đặc biệt: HALT
+
+**API VM:**
+
+```python
+vm = VirtualMachine()
+vm.load_code(bytecode)
+result = vm.execute()
+assembly = vm.disassemble()
+```
+
+### Hàm p2c_s2c
+
+```python
+from main import p2c_s2c, compile_python_to_standalone_module
+
+python_code = p2c_s2c(source, "mymodule", SecurityLevel.STANDARD)
+
+compile_python_to_standalone_module(
+    source,
+    "output.py",
+    SecurityLevel.AGGRESSIVE,
+    "mymodule"
+)
+```
+
+---
+
+## 🎓 Cách Hoạt Động
+
+### Quy Trình p2c_s2c
+
+Python → C → GCC → Binary → Nén → Base64 → Module Python độc lập
+
+### Luồng Thực Thi VM
+
+Bytecode → load_code → execute → Kết quả
+
+---
+
+## 💡 Mẹo & Thực Hành Tốt Nhất
+
+### Chọn Mức Bảo Mật
+
+```bash
+MINIMAL   # Phát triển
+STANDARD  # Sản xuất
+AGGRESSIVE
+PARANOID
+```
+
+### Khi Nào Dùng p2c_s2c
+
+* Phát hành cho người dùng
+* 1 file duy nhất
+* Không cần trình biên dịch C
+
+---
+
+# 🇨🇳 中文版本（简体）
+
+## 🎯 已完成内容
+
+### 1. 修复虚拟机（VM）✅
+
+### 2. 添加 p2c_s2c 函数 ✅
+
+### 3. 增强命令行接口（CLI）✅
+
+**新增命令：**
+
+```bash
+# 生成独立模块
+python main.py input.py --p2c-s2c output.py
+
+# 测试增强版 VM
+python main.py --test-vm
+```
+
+---
+
+## 🚀 快速开始
+
+### 基本用法
+
+```bash
+# 生成独立 Python 模块
+python main.py input.py --save-python output.py
+
+# 指定安全级别
+python main.py input.py --save-python output.py --security PARANOID
+
+# 硬件绑定
+python main.py input.py --save-python output.py --hardware-binding
+
+# 直接调用函数
+python main.py input.py --call 0 --args 10
+
+# 保存为二进制容器
+python main.py input.py --save-bytes output.bin
+```
+
+### 新功能
+
+```bash
+python main.py input.py --p2c-s2c output.py
+python main.py --test-vm
+python main.py input.py --p2c-s2c output.py --security AGGRESSIVE
+```
+
+---
+
+## 🧪 测试
+
+### VM 测试
+
+```bash
+$ python main.py --test-vm
+
+[Test] 算术运算: 5 * 10 + 3 → 53
+[Test] 比较运算: 10 > 5 → 1
+[Test] 位运算: 15 & 7 → 7
+[Test] 条件跳转 → 100
+```
+
+### p2c_s2c 测试
+
+```bash
+python main.py test.py --p2c-s2c factorial_compiled.py
+python factorial_compiled.py 0 10
+```
+
+---
+
+## 📋 新特性
+
+### 虚拟机（VM）
+
+**30+ 指令：**
+
+* 栈操作、算术、位运算、比较
+* 控制流、函数调用
+
+**VM API：**
+
+```python
+vm.load_code(bytecode)
+vm.execute()
+vm.disassemble()
+```
+
+### p2c_s2c API
+
+```python
+p2c_s2c(source, "mymodule", SecurityLevel.STANDARD)
+```
+
+---
+
+## 🎓 工作原理
+
+Python 源码 → C 转译 → GCC 编译 → 二进制 → 压缩 → Base64 → 独立 Python 模块
+
+---
+
+## 💡 使用建议
+
+### 安全级别
+
+```text
+MINIMAL    开发
+STANDARD   生产
+AGGRESSIVE 高安全
+PARANOID   最高安全
+```
+
+### 使用 p2c_s2c 的场景
+
+* 分发给终端用户
+* 单文件部署
+* 无需 C 编译环境
+
 ---
