@@ -1,6 +1,8 @@
 # P2C
 <div align="center">
 
+### 🌍 Language / Ngôn ngữ / 语言
+
 [🇻🇳 Tiếng Việt](#-phiên-bản-tiếng-việt) |
 [🇨🇳 中文](#-中文版本简体) |
 [🇺🇸 English](#p2c)
