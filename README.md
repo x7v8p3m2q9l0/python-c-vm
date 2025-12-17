@@ -4,7 +4,7 @@
 
 
 
-n="center">
+<div align="center">
 
 ### 🌍 Language / Ngôn ngữ / 语言
 
