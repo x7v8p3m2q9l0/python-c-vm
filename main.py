@@ -361,10 +361,22 @@ class PythonObfuscator:
     
     def add_control_flow_obfuscation(self, code: str) -> str:
         """Add control-flow obfuscation to Python code"""
-        # Disabled for now - too aggressive, breaks indentation
-        # TODO: Implement smarter version that respects Python syntax
-        return code
-    
+        # Keep minimal - Python indentation is sensitive
+        if self.security_level.value < SecurityLevel.PARANOID.value:
+            return code
+        
+        # Add some safe obfuscations that don't break indentation
+        lines = code.split('\n')
+        result = []
+        
+        for line in lines:
+            result.append(line)
+            # Add occasional fake operations that compile away
+            if 'def ' in line and self.security_level == SecurityLevel.PARANOID:
+                indent = len(line) - len(line.lstrip())
+                result.append(' ' * (indent + 4) + '_ = None ')
+        
+        return '\n'.join(result)
     def add_fake_functions(self) -> str:
         """Generate fake functions to confuse analysis"""
         if self.security_level.value < SecurityLevel.AGGRESSIVE.value:
@@ -2521,13 +2533,12 @@ def handle_p2c_s2c(args, py_source):
     return False
 
 def test_vm():
-    """Test enhanced VM"""
     print("="*70)
-    print("Enhanced VM Test Suite")
+    print("VM Test Suite")
     print("="*70)
     
     vm = VirtualMachine()
-    
+    # TODO: Compile test code instead of hardcoding bytecode
     tests = [
         ("Arithmetic: 5 * 10 + 3", [
             (VMOpcode.LOAD_CONST, 5),
