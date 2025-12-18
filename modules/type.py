@@ -2,7 +2,6 @@ import ast
 from dataclasses import dataclass
 @dataclass
 class FunctionMetadata:
-    """Metadata for compiled function"""
     original_name: str
     obfuscated_name: str
     param_count: int
