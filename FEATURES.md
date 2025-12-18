@@ -1,4 +1,4 @@
-# Complete Feature List
+# Feature List
 ## Python-to-C Transpiler & Obfuscator
 **Status**: Unsure.
 

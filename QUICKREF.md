@@ -1,5 +1,5 @@
 # Quick Reference Card
-## Python-to-C Transpiler v6.0.0
+## Python-to-C Transpiler
 
 ---
 
@@ -11,9 +11,6 @@
 
 # Verify compiler
 gcc --version
-
-# Get the complete version
-# File: main.py (2,878 lines)
 ```
 
 ---
@@ -25,7 +22,7 @@ gcc --version
 python main.py
 
 # Test VM
-python main.py --test-vm-enhanced
+python main.py --test-vm
 
 # Compile with defaults (STANDARD security)
 python main.py mycode.py --save-python output.py
@@ -83,7 +80,7 @@ python main.py code.py --keep-temp
 python main.py code.py --p2c-s2c standalone.py
 
 # Test enhanced VM (NEW!)
-python main.py --test-vm-enhanced
+python main.py --test-vm
 
 # Combine features
 python main.py code.py --p2c-s2c out.py --security AGGRESSIVE
@@ -232,7 +229,7 @@ python math.py 2 48 18 # gcd(48, 18) = 6
 ## VM Test Results
 
 ```bash
-$ python main.py --test-vm-enhanced
+$ python main.py --test-vm
 
 ======================================================================
 Enhanced VM Test Suite
@@ -442,13 +439,13 @@ Output: mylib.py  (7-10 KB)
 python main.py --help
 
 # Test VM
-python main.py --test-vm-enhanced
+python main.py --test-vm
 
 # Run demo
 python main.py
 
 # Read docs
-cat README_COMPLETE.md
+cat README.md
 cat FEATURES.md
 cat CHANGELOG.md
 ```
@@ -464,7 +461,7 @@ cat CHANGELOG.md
 
 ### Added
 - ✅ **--p2c-s2c** flag (standalone modules)
-- ✅ **--test-vm-enhanced** flag (VM testing)
+- ✅ **--test-vm** flag (VM testing)
 - ✅ **p2c_s2c()** function (API)
 - ✅ **Enhanced VM** (30+ opcodes)
 
@@ -484,11 +481,11 @@ python main.py code.py --save-bytes out.bin
 python main.py code.py --call 0 --args 10
 ```
 
-### v6.0.0 (Complete) - All Above PLUS:
+### v6.0.0 - All Above PLUS:
 ```bash
-python main.py code.py --p2c-s2c out.py      # NEW!
-python main.py --test-vm-enhanced             # NEW!
-python main.py code.py --no-optimize          # Control opts
+python main.py code.py --p2c-s2c out.py
+python main.py --test-vm
+python main.py code.py --no-optimize
 ```
 
 ---
@@ -512,10 +509,7 @@ Do you need maximum security?
 
 ---
 
-## Feature Count
-
-**Implemented**: 295+ features (100%)
-
+## Phases 
 **Phases Complete**:
 -  Phase 1: Core Obfuscation
 -  Phase 2: Binary Hardening
@@ -573,4 +567,4 @@ python gcd_compiled.py 0 48 18
 
 ---
 
-*Quick Reference v6.0.0 - 2025-12-17*
+*Quick Reference v6.0.0 - 2025-12-18*

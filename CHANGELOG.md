@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Version 6.0.0 - COMPLETE EDITION (2025-12-17)
+## Version 6.0.0 (2025-12-17)
 
 ### 🎉 Major Release - VM Fixed, p2c_s2c Added, All Features Working
 
@@ -16,11 +16,11 @@ This release takes the original main.py (2,486 lines) and enhances it with bug f
 - ✅ **Cycle limit** (1M cycles) - prevents infinite loops
 - ✅ **Comprehensive error handling** - detailed error messages
 - ✅ **Disassembler** - `vm.disassemble()` for debugging
-- ✅ **Test suite** - `--test-vm-enhanced` flag
+- ✅ **Test suite** - `--test-vm` flag
 
 **Test Results:**
 ```bash
-$ python main.py --test-vm-enhanced
+$ python main.py --test-vm
 ✓ Arithmetic: 5 * 10 + 3 = 53
 ✓ Comparison: 10 > 5 = 1
 ✓ Bitwise: 15 & 7 = 7
@@ -123,7 +123,7 @@ while (i <= n) {
 
 ```bash
 # Test enhanced VM
-python main.py --test-vm-enhanced
+python main.py --test-vm
 
 # Generate standalone module
 python main.py code.py --p2c-s2c output.py
@@ -210,7 +210,7 @@ python main.py code.py --save-python out.py
 
 # Plus new features
 python main.py code.py --p2c-s2c out.py
-python main.py --test-vm-enhanced
+python main.py --test-vm
 ```
 ---
 
@@ -222,7 +222,7 @@ python main.py --test-vm-enhanced
 python main.py code.py --security MINIMAL --p2c-s2c out.py
 
 # Test VM
-python main.py --test-vm-enhanced
+python main.py --test-vm
 ```
 
 #### Testing
@@ -355,10 +355,10 @@ First public release with 6 phases complete.
 2. Run your existing commands (they still work!)
 3. Try new features:
    ```bash
-   python main.py --test-vm-enhanced
+   python main.py --test-vm
    python main.py code.py --p2c-s2c out.py
    ```
 
 ---
 
-*Changelog v6.0.0 - 2025-12-17*
+*Changelog v6.0.0 - 2025-12-18*

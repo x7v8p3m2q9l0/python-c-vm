@@ -1,5 +1,5 @@
 """
-Example Python code for main_complete.py transpiler
+Example Python code for main.py transpiler
 Version 6.0.0 Complete Edition
 
 Demonstrates supported language features and test cases
@@ -244,15 +244,15 @@ def triangle_number(n):
 COMPILE THIS FILE:
 
 Method 1: Original (--save-python)
-    python main_complete.py example.py --save-python example_compiled.py
+    python main.py example.py --save-python example_compiled.py
 
 Method 2: NEW p2c_s2c (--p2c-s2c)  
-    python main_complete.py example.py --p2c-s2c example_compiled.py
+    python main.py example.py --p2c-s2c example_compiled.py
 
 Method 3: With Security Levels
-    python main_complete.py example.py --p2c-s2c example.py --security STANDARD
-    python main_complete.py example.py --p2c-s2c example.py --security AGGRESSIVE
-    python main_complete.py example.py --p2c-s2c example.py --security PARANOID
+    python main.py example.py --p2c-s2c example.py --security STANDARD
+    python main.py example.py --p2c-s2c example.py --security AGGRESSIVE
+    python main.py example.py --p2c-s2c example.py --security PARANOID
 
 USE COMPILED MODULE:
 
@@ -290,19 +290,19 @@ FUNCTION INDEX:
     14 - triangle_number(n)
 
 TEST VM:
-    python main_complete.py --test-vm-enhanced
+    python main.py --test-vm
 
 SHOW GENERATED C CODE:
-    python main_complete.py example.py --show-c
+    python main.py example.py --show-c
 
 SHOW FUNCTION METADATA:
-    python main_complete.py example.py --show-metadata
+    python main.py example.py --show-metadata
 
 DIRECT TESTING:
-    python main_complete.py example.py --call 0 --args 10
+    python main.py example.py --call 0 --args 10
 
 KEEP TEMP FILES:
-    python main_complete.py example.py --keep-temp --p2c-s2c out.py
+    python main.py example.py --keep-temp --p2c-s2c out.py
 """
 
 # ============================================================================

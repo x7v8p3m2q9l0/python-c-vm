@@ -405,13 +405,10 @@ python main.py code.py --show-metadata
 - Don't need hardware binding
 - Want simpler deployment
 
----
+Discord: negativezdev
 ---
 =======
 ---
-
-
-# P2C
 
 ---
 
@@ -591,7 +588,7 @@ PARANOID
 * Phát hành cho người dùng
 * 1 file duy nhất
 * Không cần trình biên dịch C
-
+Discord: negativezdev
 ---
 
 # 🇨🇳 中文版本（简体）
@@ -717,4 +714,5 @@ PARANOID   最高安全
 * 单文件部署
 * 无需 C 编译环境
 
+Discord: negativezdev
 ---
