@@ -272,8 +272,8 @@
 - [x] Default type handling
 
 ### Code Generation
-- [x] AdvancedOptimizer class
-- [x] EnhancedTypeSystem class
+- [x] Optimizer class
+- [x] TypeSystem class
 - [x] AST transformation pipeline
 - [x] Expression optimization
 - [x] Statement optimization
