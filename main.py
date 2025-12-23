@@ -18,9 +18,11 @@ from textwrap import dedent, indent as txt_indent
 from typing import List, Tuple, Dict, Set, Optional, Any
 from dataclasses import dataclass
 from modules import *
+
 class AdvancedCCodeGenerator:
     def __init__(self, security_level: SecurityLevel = SecurityLevel.STANDARD,
-                 enable_optimizations: bool = True):
+                 enable_optimizations: bool = True,
+                 use_vm: bool = False):
         self.functions: List[str] = []
         self.func_metadata: List[FunctionMetadata] = []
         self.symbol_table = SymbolTable()
@@ -31,6 +33,8 @@ class AdvancedCCodeGenerator:
         self.enable_optimizations = enable_optimizations
         self.optimizer = Optimizer() if enable_optimizations else None
         self.vm = VirtualMachine(security_level)
+        self.use_vm = use_vm or security_level == SecurityLevel.PARANOID
+        self.bytecode_arrays: List[Tuple[str, bytes, int]] = []  # (name, bytecode, param_count)
     
     def generate(self, py_source: str) -> Tuple[str, List[FunctionMetadata]]:
         """Generate obfuscated C code from Python source"""
@@ -83,7 +87,13 @@ class AdvancedCCodeGenerator:
         self.func_index += 1
         
         # Generate function code
-        func_code = self._func_to_c(node, obf_name)
+        if self.use_vm:
+            # compile to bytecode
+            func_code = self._func_to_vm_wrapper(node, obf_name)
+        else:
+            # transpile to C
+            func_code = self._func_to_c(node, obf_name)
+        
         self.functions.append(func_code)
     
     def _func_to_c(self, node: ast.FunctionDef, obf_name: str) -> str:
@@ -114,6 +124,57 @@ class AdvancedCCodeGenerator:
             body = junk + "\n" + body
         
         return f"int64 {obf_name}({params_str}) {{\n{body}\n}}"
+    
+    def _func_to_vm_wrapper(self, node: ast.FunctionDef, obf_name: str) -> str:
+        """NEW: Generate VM bytecode wrapper function"""
+        try:
+            # Compile Python function to VM bytecode
+            bytecode = self.vm.compiler.compile_function(node)
+            
+            # Convert bytecode to bytes
+            bytecode_bytes = bytearray()
+            for opcode, arg in bytecode:
+                bytecode_bytes.append(opcode.value)
+                # Encode argument as 4-byte little-endian
+                if arg is not None:
+                    bytecode_bytes.append(arg & 0xFF)
+                    bytecode_bytes.append((arg >> 8) & 0xFF)
+                    bytecode_bytes.append((arg >> 16) & 0xFF)
+                    bytecode_bytes.append((arg >> 24) & 0xFF)
+                else:
+                    bytecode_bytes.extend([0, 0, 0, 0])
+            
+            # Store bytecode array
+            bytecode_array_name = f"_bc_{obf_name}"
+            param_count = len(node.args.args)
+            self.bytecode_arrays.append((bytecode_array_name, bytes(bytecode_bytes), param_count))
+            
+            # Generate wrapper function that calls VM
+            params = []
+            for i, arg in enumerate(node.args.args):
+                params.append(f"int64 p{i}")
+            
+            params_str = ", ".join(params) if params else "void"
+            
+            # Build parameter array
+            if params:
+                param_init = f"int64 _params[] = {{{', '.join(f'p{i}' for i in range(len(params)))}}};"
+                param_ptr = "_params"
+            else:
+                param_init = ""
+                param_ptr = "NULL"
+            
+            wrapper = f"""int64 {obf_name}({params_str}) {{
+    {param_init}
+    return vm_execute(&_vm_instance, {bytecode_array_name}, sizeof({bytecode_array_name}), {param_ptr}, {param_count});
+}}"""
+            
+            return wrapper
+            
+        except Exception as e:
+            # Fallback to traditional C generation on error
+            print(f"[!] VM compilation failed for {node.name}, falling back to C: {e}")
+            return self._func_to_c(node, obf_name)
     
     def _generate_statements(self, stmts: List[ast.stmt], var_map: Dict[str, str], 
                            declared_vars: Set[str], indent_level: int = 1) -> List[str]:
@@ -323,16 +384,33 @@ class AdvancedCCodeGenerator:
             #endif
             """)
         
-        # Phase 10: Add VM runtime for PARANOID mode
+        # NEW: VM runtime (always included if use_vm=True OR security_level=PARANOID)
         vm_runtime = ""
-        if self.vm.enabled:
+        if self.use_vm or self.vm.enabled:
             vm_runtime = self.vm.generate_vm_runtime()
-        
-        # Function declarations
-        declarations = "\n".join(
-            f"int64 {meta.obfuscated_name}(...);" 
-            for meta in self.func_metadata
-        )
+            
+            # NEW: Add bytecode arrays
+            if self.bytecode_arrays:
+                bytecode_section = "\n// ============================================================================\n"
+                bytecode_section += "// Embedded VM Bytecode\n"
+                bytecode_section += "// ============================================================================\n\n"
+                
+                for array_name, bytecode, param_count in self.bytecode_arrays:
+                    # Convert bytes to C array initializer
+                    byte_strs = [f"0x{b:02x}" for b in bytecode]
+                    
+                    # Format nicely with 12 bytes per line
+                    lines = []
+                    for i in range(0, len(byte_strs), 12):
+                        chunk = byte_strs[i:i+12]
+                        lines.append("    " + ", ".join(chunk))
+                    
+                    array_code = ",\n".join(lines)
+                    
+                    bytecode_section += f"// Bytecode for function (params={param_count}, size={len(bytecode)} bytes)\n"
+                    bytecode_section += f"static const unsigned char {array_name}[] = {{\n{array_code}\n}};\n\n"
+                
+                vm_runtime += bytecode_section
         
         # Function implementations
         implementations = "\n\n".join(self.functions)
@@ -429,10 +507,13 @@ def compile_python_to_secure_module(
     output_dir: str,
     security_level: SecurityLevel = SecurityLevel.STANDARD,
     lib_name: str = "lib",
-    enable_optimizations: bool = True
+    enable_optimizations: bool = True,
+    use_vm: bool = False
 ) -> Tuple[CompiledLibrary, str]:
     """
     Complete pipeline: Python → Obfuscated C → Hardened DLL → Secure Module
+    
+    NEW: use_vm parameter enables VM-based compilation instead of direct C transpilation
     
     Implements ALL PHASES:
     - Phase 1: Control-flow flattening, opaque predicates
@@ -443,24 +524,35 @@ def compile_python_to_secure_module(
     - Phase 6: Minimal API
     - Phase 7: Python loader obfuscation
     - Phase 8: Advanced optimizations
-    - Phase 10: VM runtime (PARANOID), hardware binding
+    - Phase 10: VM runtime (PARANOID or use_vm=True), hardware binding
     """
     
     print(f"\n{'='*70}")
-    print(f"Advanced Python-to-C Compiler v{VERSION}")
     print(f"Security Level: {security_level.name}")
     print(f"Optimizations: {'Enabled' if enable_optimizations else 'Disabled'}")
+    print(f"VM Mode: {'Enabled' if use_vm else 'Disabled'}")  # NEW
     print(f"{'='*70}\n")
     
     # Phase 1 & 8: Transpile with obfuscation and optimizations
-    print("[1/4] Transpiling Python to obfuscated C...")
-    generator = AdvancedCCodeGenerator(security_level, enable_optimizations)
+    if use_vm:
+        print("[1/4] Compiling Python to VM bytecode...")
+    else:
+        print("[1/4] Transpiling Python to obfuscated C...")
+    
+    generator = AdvancedCCodeGenerator(security_level, enable_optimizations, use_vm)
     c_source, func_metadata = generator.generate(py_source)
     print(f"[✓] Generated {len(func_metadata)} functions ({len(c_source)} bytes)")
-    print(f"[✓] Applied control-flow flattening: {security_level.value >= SecurityLevel.STANDARD.value}")
-    print(f"[✓] Applied data obfuscation: {security_level.value >= 1}")
+    
+    if use_vm:
+        print(f"[✓] VM bytecode: {len(generator.bytecode_arrays)} functions compiled")
+        total_bytecode_size = sum(len(bc) for _, bc, _ in generator.bytecode_arrays)
+        print(f"[✓] Total bytecode size: {total_bytecode_size} bytes")
+    else:
+        print(f"[✓] Applied control-flow flattening: {security_level.value >= SecurityLevel.STANDARD.value}")
+        print(f"[✓] Applied data obfuscation: {security_level.value >= 1}")
+    
     print(f"[✓] Applied optimizations: {enable_optimizations}")
-    if security_level == SecurityLevel.PARANOID:
+    if security_level == SecurityLevel.PARANOID or use_vm:
         print(f"[✓] VM runtime included: Yes")
     
     # Phase 2: Compile with hardening
@@ -494,18 +586,19 @@ def compile_python_to_secure_module(
     return library, c_source
 
 
-def p2c_s2c(code, security: str = "PARANOID", optimize: bool = True, hardware_binding: bool = False) -> str:
+def p2c_s2c(code, security: str = "PARANOID", optimize: bool = True, 
+            hardware_binding: bool = False, use_vm: bool = False) -> str:
+    """NEW: Added use_vm parameter"""
     security_level = SecurityLevel[security]
     tmpdir = tempfile.mkdtemp(prefix="py2c_adv_")
     library, _ = compile_python_to_secure_module(
         code, tmpdir, security_level,
-        enable_optimizations=optimize
+        enable_optimizations=optimize,
+        use_vm=use_vm  # NEW
     )
     source = library.to_python_code("PySecTech-"+RandomGenerator.random_id(16), hardware_binding)[0]
     shutil.rmtree(tmpdir)
     return source
-
-
 def compile_python_to_standalone_module(python_source: str,
                                         output_file: str,
                                         security_level = None,
