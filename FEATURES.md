@@ -5,7 +5,7 @@
 ---
 ## SPPECIAl: Decompiler breaker (PyLingual)
 ![PIC](thing.png)
-![LINK](https://pylingual.io/view_chimera?identifier=5b15f4eb6349261a4c9f09b51233ac90d3f58dd574e493d9eeed6cf91a9b75fa)
+https://pylingual.io/view_chimera?identifier=5b15f4eb6349261a4c9f09b51233ac90d3f58dd574e493d9eeed6cf91a9b75fa
 ## Phase 1: Core Obfuscation
 
 ### Control-Flow Obfuscation
