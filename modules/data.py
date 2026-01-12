@@ -116,3 +116,37 @@ def {name}():
             symbols.append(f"{name} = {value}")
         
         return '\n'.join(symbols)
+
+# ENHANCED: More obfuscation variants
+class EnhancedDataObfuscator(DataObfuscator):
+    """Enhanced obfuscator with more variants"""
+    
+    @staticmethod
+    def obfuscate_int_advanced(value: int) -> str:
+        """Advanced integer obfuscation with more variants"""
+        if value == 0:
+            variants = [
+                "(0)",
+                "(1 - 1)",
+                "(x ^ x)",
+                "(x & 0)",
+                "(x * 0)",
+                "((x >> 31) & 0)",
+            ]
+            return secrets.choice(variants).replace('x', str(RandomGenerator.random_int(1, 100)))
+        
+        # Use multiple transformations
+        offset1 = RandomGenerator.random_int(-100, 100)
+        offset2 = RandomGenerator.random_int(-100, 100)
+        xor_key = RandomGenerator.random_int(1, 255)
+        
+        variants = [
+            f"({value} + {offset1} - {offset1})",
+            f"(({value + offset1}) - {offset1})",
+            f"({value * 2} / 2)",
+            f"(({value} ^ {xor_key}) ^ {xor_key})",
+            f"((~(~{value})))",
+            f"(({value} << 0))",
+            f"(({value} + {offset1} + {offset2}) - {offset1} - {offset2})",
+        ]
+        return secrets.choice(variants)

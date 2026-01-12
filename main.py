@@ -31,7 +31,7 @@ class AdvancedCCodeGenerator:
         self.data_obf = DataObfuscator()
         self.func_index = 0
         self.enable_optimizations = enable_optimizations
-        self.optimizer = Optimizer() if enable_optimizations else None
+        self.optimizer = UltimateOptimizer() if enable_optimizations else None
         self.vm = VirtualMachine(security_level)
         self.use_vm = use_vm or security_level == SecurityLevel.PARANOID
         self.bytecode_arrays: List[Tuple[str, bytes, int]] = []  # (name, bytecode, param_count)
@@ -42,7 +42,7 @@ class AdvancedCCodeGenerator:
         
         # Phase 8: Apply optimizations to AST
         if self.optimizer:
-            tree = self._optimize_ast(tree)
+            tree = self.optimizer.optimize(tree)
         
         # Extract functions
         for node in tree.body:
@@ -55,18 +55,18 @@ class AdvancedCCodeGenerator:
         # Generate complete C code with obfuscation
         return self._build_c_code(), self.func_metadata
     
-    def _optimize_ast(self, tree: ast.Module) -> ast.Module:
-        """Apply Phase 8 optimizations to AST"""
-        # Optimize each function
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef):
-                # Dead code elimination
-                node.body = self.optimizer.dead_code_elimination(node.body)
+    # def _optimize_ast(self, tree: ast.Module) -> ast.Module:
+    #     """Apply Phase 8 optimizations to AST"""
+    #     # Optimize each function
+    #     for node in tree.body:
+    #         if isinstance(node, ast.FunctionDef):
+    #             # Dead code elimination
+    #             node.body = self.optimizer.dead_code_elimination(node.body)
                 
-                # Constant folding on expressions
-                for i, stmt in enumerate(node.body):
-                    if isinstance(stmt, ast.Assign):
-                        stmt.value = self.optimizer.constant_folding(stmt.value)
+    #             # Constant folding on expressions
+    #             for i, stmt in enumerate(node.body):
+    #                 if isinstance(stmt, ast.Assign):
+    #                     stmt.value = self.optimizer.constant_folding(stmt.value)
         
         return tree
     
@@ -132,6 +132,8 @@ class AdvancedCCodeGenerator:
             bytecode = self.vm.compiler.compile_function(node)
             
             # Convert bytecode to bytes
+
+
             bytecode_bytes = bytearray()
             for opcode, arg in bytecode:
                 bytecode_bytes.append(opcode.value)
@@ -984,3 +986,58 @@ if __name__ == "__main__":
     else:
         # Run CLI
         main()
+
+def compile_python_to_executable_module(python_source: str,
+                                        output_file: str,
+                                        security_level = None,
+                                        enable_optimizations: bool = True):
+    """
+    NEW: Compile Python to executable module that runs like normal Python
+    
+    Args:
+        python_source: Original Python code (with functions and execution)
+        output_file: Output .py file path
+        security_level: Security level (default: STANDARD)
+        enable_optimizations: Enable optimizations
+    """
+    import ast
+    import tempfile
+    import shutil
+    from pathlib import Path
+    
+    if security_level is None:
+        security_level = SecurityLevel.STANDARD
+    
+    tree = ast.parse(python_source)
+    
+    functions = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            functions.append(node)
+    
+    if not functions:
+        raise ValueError("No functions found in source code")
+    
+    func_tree = ast.Module(body=functions, type_ignores=[])
+    func_code = ast.unparse(func_tree)
+    
+    tmpdir = tempfile.mkdtemp(prefix="py2c_exec_")
+    
+    try:
+        library, c_source = compile_python_to_secure_module(
+            func_code,
+            tmpdir,
+            security_level,
+            enable_optimizations=enable_optimizations
+        )
+        
+        module_name = Path(output_file).stem
+        library.to_python_module_executable(
+            output_file,
+            module_name,
+            python_source,
+            hardware_binding=False
+        )
+        
+    finally:
+        shutil.rmtree(tmpdir)

@@ -337,3 +337,76 @@ if __name__ == "__main__":
             template = py_obf.add_control_flow_obfuscation(template)
         
         return template
+
+    # NEW METHOD - Added for executable module generation
+    def to_python_module_executable(self, output_path: str, module_name: str,
+                                    original_code: str,
+                                    hardware_binding: bool = False):
+        """Generate executable module that runs like normal Python"""
+        import ast
+        
+        obf_loader, hw_cpu, hw_mac = self.to_python_code(module_name, hardware_binding)
+        tree = ast.parse(original_code)
+        
+        function_names = []
+        executable_statements = []
+        
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                function_names.append(node.name)
+            else:
+                executable_statements.append(node)
+        
+        lines = obf_loader.split('\n')
+        main_index = -1
+        for i, line in enumerate(lines):
+            if 'if __name__ == "__main__":' in line:
+                main_index = i
+                break
+        
+        if main_index != -1:
+            lines = lines[:main_index]
+        
+        loader_code = '\n'.join(lines)
+        
+        name_to_index = {}
+        for meta in self.func_metadata:
+            name_to_index[meta.original_name] = meta.index
+        
+        wrapper_functions = []
+        for func_name in function_names:
+            if func_name in name_to_index:
+                idx = name_to_index[func_name]
+                wrapper = f"""
+def {func_name}(*args):
+    return call({idx}, *args)
+"""
+                wrapper_functions.append(wrapper)
+        
+        if executable_statements:
+            exec_tree = ast.Module(body=executable_statements, type_ignores=[])
+            exec_code = ast.unparse(exec_tree)
+            indented_exec = '\n'.join('    ' + line for line in exec_code.split('\n'))
+            main_block = f"""
+if __name__ == "__main__":
+{indented_exec}
+"""
+        else:
+            main_block = ""
+        
+        full_code = f"""{loader_code}
+
+{''.join(wrapper_functions)}
+{main_block}"""
+        
+        with open(output_path, 'w') as f:
+            f.write(full_code)
+        
+        if not sys.platform.startswith("win"):
+            os.chmod(output_path, 0o755)
+        
+        print(f"[✓] Generated executable module: {output_path}")
+        print(f"[*] Size: {os.path.getsize(output_path):,} bytes")
+        print(f"[*] Security: {self.security_level.name}")
+        if hardware_binding:
+            print(f"[*] Hardware-bound: CPU={hw_cpu[:8]}..., MAC={hw_mac[:8]}...")

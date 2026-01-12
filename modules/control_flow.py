@@ -2,12 +2,8 @@ from .utils import RandomGenerator
 from typing import List, Set
 import secrets
 class OpaquePredicateGenerator:
-    """Generate opaque predicates (always true/false conditions)"""
-    
     @staticmethod
     def always_true() -> str:
-        """Generate always-true predicate"""
-        # Use actual constants to avoid undeclared variable errors
         c = RandomGenerator.random_int(1, 100)
         templates = [
             f"(({c} & 1) == 0 || ({c} & 1) == 1)",  # Tautology: even or odd

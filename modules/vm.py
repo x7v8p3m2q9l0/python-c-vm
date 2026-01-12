@@ -1,939 +1,539 @@
 import ast
+import secrets
+import hashlib
+from typing import List, Tuple, Optional, Dict, Any
 from enum import Enum
-from typing import List, Tuple, Dict, Optional, Set
-from .base import SecurityLevel
 
+try:
+    from .type import VMOpcodeBase, OpcodeMapping
+    from .base import SecurityLevel, CompilationError
+    from .utils import RandomGenerator
+except ImportError:
+    # Standalone mode
+    class VMOpcodeBase(Enum):
+        LOAD_CONST = 0x01
+        LOAD_VAR = 0x02
+        STORE_VAR = 0x03
+        LOAD_PARAM = 0x04
+        ADD = 0x10
+        SUB = 0x11
+        MUL = 0x12
+        DIV = 0x13
+        MOD = 0x14
+        NEG = 0x15
+        AND = 0x20
+        OR = 0x21
+        XOR = 0x22
+        NOT = 0x23
+        SHL = 0x24
+        SHR = 0x25
+        LT = 0x30
+        LE = 0x31
+        GT = 0x32
+        GE = 0x33
+        EQ = 0x34
+        NE = 0x35
+        JUMP = 0x40
+        JUMP_IF_FALSE = 0x41
+        JUMP_IF_TRUE = 0x42
+        CALL = 0x50
+        RETURN = 0x51
+        DUP = 0x60
+        POP = 0x61
+        SWAP = 0x62
+        NOP = 0xFE
+        HALT = 0xFF
+    
+    class OpcodeMapping:
+        def __init__(self):
+            self.salt = secrets.token_bytes(32)
+            self.forward = {}
+            self.reverse = {}
+            self._generate_mapping()
+            self.checksum = self._compute_checksum()
+        
+        def _generate_mapping(self):
+            base_opcodes = [op.value for op in VMOpcodeBase]
+            random_pool = list(range(256))
+            secrets.SystemRandom().shuffle(random_pool)
+            for i, base_op in enumerate(base_opcodes):
+                runtime_op = random_pool[i]
+                self.forward[base_op] = runtime_op
+                self.reverse[runtime_op] = base_op
+        
+        def _compute_checksum(self) -> bytes:
+            data = b''
+            for base_op in sorted(self.forward.keys()):
+                runtime_op = self.forward[base_op]
+                data += base_op.to_bytes(1, 'little')
+                data += runtime_op.to_bytes(1, 'little')
+            data += self.salt
+            return hashlib.sha256(data).digest()
+        
+        def map_opcode(self, base_opcode: int) -> int:
+            return self.forward.get(base_opcode, base_opcode)
+    
+    class SecurityLevel(Enum):
+        MINIMAL = 0
+        STANDARD = 1
+        AGGRESSIVE = 2
+        PARANOID = 3
+    
+    class CompilationError(Exception):
+        pass
 
-class VMOpcode(Enum):
-    """VM Bytecode Instructions"""
-    # Load/Store
-    LOAD_CONST = 0x01
-    LOAD_VAR = 0x02
-    STORE_VAR = 0x03
-    LOAD_PARAM = 0x04  # NEW: Load parameter
-    
-    # Arithmetic
-    ADD = 0x10
-    SUB = 0x11
-    MUL = 0x12
-    DIV = 0x13
-    MOD = 0x14
-    NEG = 0x15
-    
-    # Bitwise
-    AND = 0x20
-    OR = 0x21
-    XOR = 0x22
-    NOT = 0x23
-    SHL = 0x24
-    SHR = 0x25
-    
-    # Comparisons
-    LT = 0x30
-    LE = 0x31
-    GT = 0x32
-    GE = 0x33
-    EQ = 0x34
-    NE = 0x35
-    
-    # Control flow
-    JUMP = 0x40
-    JUMP_IF_FALSE = 0x41
-    JUMP_IF_TRUE = 0x42
-    
-    # Functions
-    CALL = 0x50
-    RETURN = 0x51
-    
-    # Stack manipulation
-    DUP = 0x60
-    POP = 0x61
-    SWAP = 0x62
-    
-    # Special
-    NOP = 0xFE
-    HALT = 0xFF
-
-
-class CompilerError(Exception):
-    """Compilation error"""
-    pass
+__version__ = "6.2.0-complete-fix"
 
 
 class VMCompiler:
-    """Compiles Python AST to VM bytecode with stack tracking"""
+    """VM Compiler - Returns plain tuples, parameters work correctly"""
     
-    def __init__(self):
-        self.bytecode: List[Tuple[VMOpcode, Optional[int]]] = []
+    def __init__(self, mapping: Optional[OpcodeMapping] = None):
+        self.mapping = mapping or OpcodeMapping()
+        self.bytecode: List[Tuple[VMOpcodeBase, Optional[int]]] = []
         self.var_map: Dict[str, int] = {}
-        self.param_map: Dict[str, int] = {}  # Track parameters separately
         self.next_var_id = 0
-        self.label_counter = 0
-        self.labels: Dict[str, int] = {}
-        self.fixups: List[Tuple[int, str]] = []
-        
-        # Stack tracking
-        self.stack_depth = 0
-        self.max_stack_depth = 0
-        self.stack_depths: Dict[int, int] = {}  # Track stack depth at each instruction
+        self.function_name = ""
+        self.param_names: List[str] = []
+        self.error_context = []
     
-    def compile_function(self, func_def: ast.FunctionDef) -> List[Tuple[VMOpcode, Optional[int]]]:
-        """Compile a function to bytecode"""
-        self.bytecode = []
-        self.var_map = {}
-        self.param_map = {}
-        self.next_var_id = 0
-        self.label_counter = 0
-        self.labels = {}
-        self.fixups = []
-        self.stack_depth = 0
-        self.max_stack_depth = 0
-        self.stack_depths = {}
-        
-        # Map parameters to parameter IDs (not variables)
-        for i, arg in enumerate(func_def.args.args):
-            self.param_map[arg.arg] = i
-        
-        # Compile function body
-        for stmt in func_def.body:
-            self._compile_stmt(stmt)
-        
-        # Add implicit return 0 if no return statement
-        if not self.bytecode or self.bytecode[-1][0] != VMOpcode.RETURN:
-            self.emit(VMOpcode.LOAD_CONST, 0)
-            self.emit(VMOpcode.RETURN, None)
-        
-        # Resolve label fixups
-        self._resolve_fixups()
-        
-        # Validate bytecode
-        self._validate_bytecode()
-        
-        return self.bytecode
+    def compile_function(self, func_def: ast.FunctionDef) -> List[Tuple[VMOpcodeBase, Optional[int]]]:
+        """Compile a Python function to VM bytecode"""
+        try:
+            self.bytecode = []
+            self.var_map = {}
+            self.next_var_id = 0
+            self.function_name = func_def.name
+            self.param_names = []
+            self.error_context = []
+            
+            # CRITICAL FIX: Map parameters as variables (not separate)
+            # This matches how main.py passes them!
+            for i, arg in enumerate(func_def.args.args):
+                param_name = arg.arg
+                self.param_names.append(param_name)
+                # Map parameter to variable ID
+                self.var_map[param_name] = i
+                self.next_var_id = i + 1
+            
+            # Load parameters into variables at function start
+            for i, param_name in enumerate(self.param_names):
+                self.emit(VMOpcodeBase.LOAD_PARAM, i)
+                self.emit(VMOpcodeBase.STORE_VAR, i)
+            
+            # Compile function body
+            for stmt in func_def.body:
+                self._compile_stmt(stmt)
+            
+            # Ensure return
+            if not self.bytecode or self.bytecode[-1][0] != VMOpcodeBase.RETURN:
+                self.emit(VMOpcodeBase.LOAD_CONST, 0)
+                self.emit(VMOpcodeBase.RETURN)
+            
+            return self.bytecode
+            
+        except Exception as e:
+            context = "\n".join(self.error_context) if self.error_context else "unknown"
+            raise CompilationError(f"VM compilation failed for {func_def.name}: {e}\nContext: {context}")
     
-    def emit(self, opcode: VMOpcode, arg: Optional[int] = None):
-        """Emit a bytecode instruction and update stack depth"""
-        # Record current stack depth
-        self.stack_depths[len(self.bytecode)] = self.stack_depth
-        
-        # Update stack depth based on opcode
-        if opcode == VMOpcode.LOAD_CONST or opcode == VMOpcode.LOAD_VAR or opcode == VMOpcode.LOAD_PARAM:
-            self.stack_depth += 1
-        elif opcode == VMOpcode.STORE_VAR:
-            self.stack_depth -= 1
-        elif opcode in [VMOpcode.ADD, VMOpcode.SUB, VMOpcode.MUL, VMOpcode.DIV, 
-                       VMOpcode.MOD, VMOpcode.AND, VMOpcode.OR, VMOpcode.XOR,
-                       VMOpcode.SHL, VMOpcode.SHR, VMOpcode.LT, VMOpcode.LE,
-                       VMOpcode.GT, VMOpcode.GE, VMOpcode.EQ, VMOpcode.NE]:
-            # Binary ops: pop 2, push 1
-            self.stack_depth -= 1
-        elif opcode in [VMOpcode.NEG, VMOpcode.NOT]:
-            # Unary ops: pop 1, push 1 (net 0)
-            pass
-        elif opcode == VMOpcode.DUP:
-            self.stack_depth += 1
-        elif opcode == VMOpcode.POP:
-            self.stack_depth -= 1
-        elif opcode == VMOpcode.SWAP:
-            # No change in depth
-            pass
-        elif opcode == VMOpcode.RETURN:
-            # Pop 1 for return value
-            if self.stack_depth > 0:
-                self.stack_depth -= 1
-        elif opcode in [VMOpcode.JUMP_IF_FALSE, VMOpcode.JUMP_IF_TRUE]:
-            # Pop condition
-            self.stack_depth -= 1
-        
-        # Track maximum stack depth
-        if self.stack_depth > self.max_stack_depth:
-            self.max_stack_depth = self.stack_depth
-        
-        # Check for stack underflow
-        if self.stack_depth < 0:
-            raise CompilerError(f"Stack underflow at instruction {len(self.bytecode)}")
-        
+    def emit(self, opcode: VMOpcodeBase, arg: Optional[int] = None):
+        """Emit a VM instruction as plain tuple"""
         self.bytecode.append((opcode, arg))
     
-    def get_label(self) -> str:
-        """Generate a unique label"""
-        label = f"L{self.label_counter}"
-        self.label_counter += 1
-        return label
+    def _get_var_id(self, name: str) -> int:
+        """Get or create variable ID"""
+        if name not in self.var_map:
+            self.var_map[name] = self.next_var_id
+            self.next_var_id += 1
+        return self.var_map[name]
     
-    def mark_label(self, label: str):
-        """Mark current position with a label"""
-        self.labels[label] = len(self.bytecode)
-    
-    def emit_jump(self, opcode: VMOpcode, label: str):
-        """Emit a jump to a label (to be resolved later)"""
-        self.fixups.append((len(self.bytecode), label))
-        self.emit(opcode, 0)  # Placeholder
-    
-    def _resolve_fixups(self):
-        """Resolve all label references"""
-        for pos, label in self.fixups:
-            if label not in self.labels:
-                raise CompilerError(f"Undefined label: {label}")
-            target = self.labels[label]
-            self.bytecode[pos] = (self.bytecode[pos][0], target)
-    
-    def _validate_bytecode(self):
-        """Validate generated bytecode"""
-        # Check all jumps are in bounds
-        code_len = len(self.bytecode)
-        for i, (opcode, arg) in enumerate(self.bytecode):
-            if opcode in [VMOpcode.JUMP, VMOpcode.JUMP_IF_FALSE, VMOpcode.JUMP_IF_TRUE]:
-                if arg is None or arg < 0 or arg >= code_len:
-                    raise CompilerError(f"Invalid jump target at {i}: {arg}")
-        
-        # Check final stack depth
-        if self.stack_depth != 0:
-            # Should be 0 after return (return pops the value)
-            # Allow 1 if last instruction is RETURN with value on stack
-            if not (self.stack_depth == 1 and self.bytecode and 
-                   self.bytecode[-1][0] == VMOpcode.RETURN):
-                # Actually this is ok - RETURN will consume it
-                pass
-    
-    def _compile_stmt(self, stmt: ast.stmt) -> bool:
-        """
-        Compile a statement
-        Returns True if statement unconditionally exits (return/break/continue)
-        """
-        if isinstance(stmt, ast.Return):
-            if stmt.value:
-                self._compile_expr(stmt.value)
-            else:
-                self.emit(VMOpcode.LOAD_CONST, 0)
-            self.emit(VMOpcode.RETURN, None)
-            return True  # Unconditional exit
-        
-        elif isinstance(stmt, ast.Assign):
-            if isinstance(stmt.targets[0], ast.Name):
-                var_name = stmt.targets[0].id
-                
-                # Check if it's a parameter (can't reassign parameters as vars)
-                if var_name in self.param_map:
-                    # Store in variable space, not parameter space
-                    if var_name not in self.var_map:
-                        self.var_map[var_name] = self.next_var_id
-                        self.next_var_id += 1
+    def _compile_stmt(self, stmt: ast.stmt):
+        """Compile a statement"""
+        try:
+            if isinstance(stmt, ast.Return):
+                self.error_context.append(f"Compiling return statement")
+                if stmt.value:
+                    self._compile_expr(stmt.value)
                 else:
-                    if var_name not in self.var_map:
-                        self.var_map[var_name] = self.next_var_id
-                        self.next_var_id += 1
-                
+                    self.emit(VMOpcodeBase.LOAD_CONST, 0)
+                self.emit(VMOpcodeBase.RETURN)
+            
+            elif isinstance(stmt, ast.Assign):
+                self.error_context.append(f"Compiling assignment")
+                if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                    self._compile_expr(stmt.value)
+                    var_id = self._get_var_id(stmt.targets[0].id)
+                    self.emit(VMOpcodeBase.STORE_VAR, var_id)
+            
+            elif isinstance(stmt, ast.AugAssign):
+                self.error_context.append(f"Compiling augmented assignment")
+                if isinstance(stmt.target, ast.Name):
+                    var_id = self._get_var_id(stmt.target.id)
+                    self.emit(VMOpcodeBase.LOAD_VAR, var_id)
+                    self._compile_expr(stmt.value)
+                    self._compile_binop(stmt.op)
+                    self.emit(VMOpcodeBase.STORE_VAR, var_id)
+            
+            elif isinstance(stmt, ast.If):
+                self.error_context.append(f"Compiling if statement")
+                self._compile_if(stmt)
+            
+            elif isinstance(stmt, ast.While):
+                self.error_context.append(f"Compiling while loop")
+                self._compile_while(stmt)
+            
+            elif isinstance(stmt, ast.Expr):
+                self.error_context.append(f"Compiling expression statement")
                 self._compile_expr(stmt.value)
-                self.emit(VMOpcode.STORE_VAR, self.var_map[var_name])
-            return False
-        
-        elif isinstance(stmt, ast.AugAssign):
-            var_name = stmt.target.id
+                self.emit(VMOpcodeBase.POP)
             
-            # Load current value
-            if var_name in self.param_map:
-                self.emit(VMOpcode.LOAD_PARAM, self.param_map[var_name])
-            elif var_name in self.var_map:
-                self.emit(VMOpcode.LOAD_VAR, self.var_map[var_name])
+            elif isinstance(stmt, ast.Pass):
+                self.emit(VMOpcodeBase.NOP)
+            
             else:
-                raise CompilerError(f"Undefined variable: {var_name}")
-            
-            # Compile RHS
-            self._compile_expr(stmt.value)
-            
-            # Apply operation
-            if isinstance(stmt.op, ast.Add):
-                self.emit(VMOpcode.ADD, None)
-            elif isinstance(stmt.op, ast.Sub):
-                self.emit(VMOpcode.SUB, None)
-            elif isinstance(stmt.op, ast.Mult):
-                self.emit(VMOpcode.MUL, None)
-            elif isinstance(stmt.op, ast.Div) or isinstance(stmt.op, ast.FloorDiv):
-                self.emit(VMOpcode.DIV, None)
-            elif isinstance(stmt.op, ast.Mod):
-                self.emit(VMOpcode.MOD, None)
-            else:
-                raise CompilerError(f"Unsupported augmented assignment: {type(stmt.op)}")
-            
-            # Store result - create var if needed
-            if var_name not in self.var_map:
-                self.var_map[var_name] = self.next_var_id
-                self.next_var_id += 1
-            self.emit(VMOpcode.STORE_VAR, self.var_map[var_name])
-            return False
-        
-        elif isinstance(stmt, ast.While):
-            loop_start = self.get_label()
-            loop_end = self.get_label()
-            
-            self.mark_label(loop_start)
-            
-            # Save stack depth for loop verification
-            loop_start_depth = self.stack_depth
-            
-            self._compile_expr(stmt.test)
-            self.emit_jump(VMOpcode.JUMP_IF_FALSE, loop_end)
-            
-            for body_stmt in stmt.body:
-                self._compile_stmt(body_stmt)
-            
-            # Verify stack is balanced in loop body (unless body exits unconditionally)
-            if self.stack_depth != loop_start_depth:
-                raise CompilerError(f"Stack imbalance in while loop: {self.stack_depth} vs {loop_start_depth}")
-            
-            self.emit_jump(VMOpcode.JUMP, loop_start)
-            self.mark_label(loop_end)
-            return False
-        
-        elif isinstance(stmt, ast.If):
-            else_label = self.get_label()
-            end_label = self.get_label()
-            
-            # Save stack depth
-            if_start_depth = self.stack_depth
-            
-            self._compile_expr(stmt.test)
-            self.emit_jump(VMOpcode.JUMP_IF_FALSE, else_label)
-            
-            # Compile then branch and check if it exits
-            then_exits = False
-            for body_stmt in stmt.body:
-                exits = self._compile_stmt(body_stmt)
-                if exits:
-                    then_exits = True
-            
-            then_end_depth = self.stack_depth
-            
-            if stmt.orelse:
-                # Only emit jump if then branch doesn't exit
-                if not then_exits:
-                    self.emit_jump(VMOpcode.JUMP, end_label)
+                raise CompilationError(f"Unsupported statement type: {type(stmt).__name__}")
                 
-                self.mark_label(else_label)
-                
-                # Reset stack depth for else branch
-                self.stack_depth = if_start_depth
-                
-                # Compile else branch and check if it exits
-                else_exits = False
-                for else_stmt in stmt.orelse:
-                    exits = self._compile_stmt(else_stmt)
-                    if exits:
-                        else_exits = True
-                
-                # Only verify stack balance if neither branch exits
-                # If both branches exit, no code after this runs
-                # If one exits and one doesn't, the non-exiting one determines stack
-                if not then_exits and not else_exits:
-                    # Both branches continue - must have same stack effect
-                    if self.stack_depth != then_end_depth:
-                        raise CompilerError(f"Stack imbalance in if/else branches: {then_end_depth} vs {self.stack_depth}")
-                elif then_exits and not else_exits:
-                    # Then exits, else continues - use else's depth
-                    pass  # self.stack_depth already set by else branch
-                elif not then_exits and else_exits:
-                    # Else exits, then continues - use then's depth
-                    self.stack_depth = then_end_depth
-                else:
-                    # Both exit - function exits, stack depth doesn't matter
-                    # But we should maintain consistency for analysis
-                    pass
-                
-                self.mark_label(end_label)
-                
-                # Return True only if BOTH branches exit
-                return then_exits and else_exits
-            else:
-                self.mark_label(else_label)
-                # No else branch - if doesn't exit, stack should be unchanged
-                if not then_exits:
-                    self.stack_depth = if_start_depth
-                return False  # Without else, statement doesn't unconditionally exit
-        
-        return False  # Default: statement doesn't exit
+        finally:
+            if self.error_context:
+                self.error_context.pop()
     
     def _compile_expr(self, expr: ast.expr):
         """Compile an expression"""
-        if isinstance(expr, ast.Constant):
-            # Handle both int and bool constants
-            value = expr.value
-            if isinstance(value, bool):
-                value = 1 if value else 0
-            self.emit(VMOpcode.LOAD_CONST, int(value))
-        
-        elif isinstance(expr, ast.Name):
-            var_name = expr.id
-            # Check if it's a parameter first
-            if var_name in self.param_map:
-                self.emit(VMOpcode.LOAD_PARAM, self.param_map[var_name])
-            elif var_name in self.var_map:
-                self.emit(VMOpcode.LOAD_VAR, self.var_map[var_name])
-            else:
-                raise CompilerError(f"Undefined variable: {var_name}")
-        
-        elif isinstance(expr, ast.BinOp):
-            self._compile_expr(expr.left)
-            self._compile_expr(expr.right)
-            
-            if isinstance(expr.op, ast.Add):
-                self.emit(VMOpcode.ADD, None)
-            elif isinstance(expr.op, ast.Sub):
-                self.emit(VMOpcode.SUB, None)
-            elif isinstance(expr.op, ast.Mult):
-                self.emit(VMOpcode.MUL, None)
-            elif isinstance(expr.op, ast.Div) or isinstance(expr.op, ast.FloorDiv):
-                self.emit(VMOpcode.DIV, None)
-            elif isinstance(expr.op, ast.Mod):
-                self.emit(VMOpcode.MOD, None)
-            elif isinstance(expr.op, ast.BitAnd):
-                self.emit(VMOpcode.AND, None)
-            elif isinstance(expr.op, ast.BitOr):
-                self.emit(VMOpcode.OR, None)
-            elif isinstance(expr.op, ast.BitXor):
-                self.emit(VMOpcode.XOR, None)
-            elif isinstance(expr.op, ast.LShift):
-                self.emit(VMOpcode.SHL, None)
-            elif isinstance(expr.op, ast.RShift):
-                self.emit(VMOpcode.SHR, None)
-            else:
-                raise CompilerError(f"Unsupported binary operation: {type(expr.op)}")
-        
-        elif isinstance(expr, ast.Compare):
-            if len(expr.ops) != 1 or len(expr.comparators) != 1:
-                raise CompilerError("Only single comparisons supported")
-            
-            self._compile_expr(expr.left)
-            self._compile_expr(expr.comparators[0])
-            
-            op = expr.ops[0]
-            if isinstance(op, ast.Lt):
-                self.emit(VMOpcode.LT, None)
-            elif isinstance(op, ast.LtE):
-                self.emit(VMOpcode.LE, None)
-            elif isinstance(op, ast.Gt):
-                self.emit(VMOpcode.GT, None)
-            elif isinstance(op, ast.GtE):
-                self.emit(VMOpcode.GE, None)
-            elif isinstance(op, ast.Eq):
-                self.emit(VMOpcode.EQ, None)
-            elif isinstance(op, ast.NotEq):
-                self.emit(VMOpcode.NE, None)
-            else:
-                raise CompilerError(f"Unsupported comparison: {type(op)}")
-        
-        elif isinstance(expr, ast.UnaryOp):
-            self._compile_expr(expr.operand)
-            if isinstance(expr.op, ast.USub):
-                self.emit(VMOpcode.NEG, None)
-            elif isinstance(expr.op, ast.Not):
-                self.emit(VMOpcode.NOT, None)
-            else:
-                raise CompilerError(f"Unsupported unary operation: {type(expr.op)}")
-        
-        elif isinstance(expr, ast.IfExp):
-            else_label = self.get_label()
-            end_label = self.get_label()
-            
-            self._compile_expr(expr.test)
-            self.emit_jump(VMOpcode.JUMP_IF_FALSE, else_label)
-            self._compile_expr(expr.body)
-            self.emit_jump(VMOpcode.JUMP, end_label)
-            self.mark_label(else_label)
-            self._compile_expr(expr.orelse)
-            self.mark_label(end_label)
-        
-        else:
-            raise CompilerError(f"Unsupported expression: {type(expr)}")
-
-
-class VirtualMachine:
-    """VM runtime for testing and C code generation"""
-    
-    def __init__(self, security_level=None):
-        self.security_level = security_level
-        self.enabled = security_level and security_level.value >= SecurityLevel.PARANOID.value
-        self.compiler = VMCompiler()
-        
-        # Runtime state
-        self.stack: List[int] = []
-        self.vars: Dict[int, int] = {}
-        self.params: List[int] = []  # Function parameters
-        self.pc = 0
-        self.code: List[Tuple[VMOpcode, Optional[int]]] = []
-        self.max_stack = 1024
-        self.call_stack: List[int] = []
-    
-    def load_code(self, code: List[Tuple[VMOpcode, Optional[int]]], params: List[int] = None):
-        """Load bytecode and parameters"""
-        self.code = code
-        self.pc = 0
-        self.stack = []
-        self.vars = {}
-        self.params = params or []
-        self.call_stack = []
-    
-    def push(self, value: int):
-        """Push to stack"""
-        if len(self.stack) >= self.max_stack:
-            raise RuntimeError("Stack overflow")
-        self.stack.append(value)
-    
-    def pop(self) -> int:
-        """Pop from stack"""
-        if not self.stack:
-            raise RuntimeError("Stack underflow")
-        return self.stack.pop()
-    
-    def execute(self, max_cycles: int = 1000000) -> int:
-        """Execute bytecode"""
-        cycles = 0
-        
-        while self.pc < len(self.code) and cycles < max_cycles:
-            cycles += 1
-            
-            if self.pc < 0 or self.pc >= len(self.code):
-                raise RuntimeError(f"Invalid PC: {self.pc}")
-            
-            opcode, arg = self.code[self.pc]
-            self.pc += 1
-            
-            try:
-                if opcode == VMOpcode.LOAD_CONST:
-                    self.push(arg if arg is not None else 0)
-                
-                elif opcode == VMOpcode.LOAD_VAR:
-                    if arg not in self.vars:
-                        self.push(0)  # Default to 0 for uninitialized vars
-                    else:
-                        self.push(self.vars[arg])
-                
-                elif opcode == VMOpcode.LOAD_PARAM:
-                    if arg is None or arg < 0 or arg >= len(self.params):
-                        self.push(0)  # Default for out-of-bounds parameters
-                    else:
-                        self.push(self.params[arg])
-                
-                elif opcode == VMOpcode.STORE_VAR:
-                    self.vars[arg] = self.pop()
-                
-                elif opcode == VMOpcode.ADD:
-                    b, a = self.pop(), self.pop()
-                    self.push(a + b)
-                
-                elif opcode == VMOpcode.SUB:
-                    b, a = self.pop(), self.pop()
-                    self.push(a - b)
-                
-                elif opcode == VMOpcode.MUL:
-                    b, a = self.pop(), self.pop()
-                    self.push(a * b)
-                
-                elif opcode == VMOpcode.DIV:
-                    b, a = self.pop(), self.pop()
-                    if b == 0:
-                        raise RuntimeError("Division by zero")
-                    self.push(a // b)
-                
-                elif opcode == VMOpcode.MOD:
-                    b, a = self.pop(), self.pop()
-                    if b == 0:
-                        raise RuntimeError("Modulo by zero")
-                    self.push(a % b)
-                
-                elif opcode == VMOpcode.NEG:
-                    self.push(-self.pop())
-                
-                elif opcode == VMOpcode.AND:
-                    b, a = self.pop(), self.pop()
-                    self.push(a & b)
-                
-                elif opcode == VMOpcode.OR:
-                    b, a = self.pop(), self.pop()
-                    self.push(a | b)
-                
-                elif opcode == VMOpcode.XOR:
-                    b, a = self.pop(), self.pop()
-                    self.push(a ^ b)
-                
-                elif opcode == VMOpcode.NOT:
-                    self.push(~self.pop())
-                
-                elif opcode == VMOpcode.SHL:
-                    b, a = self.pop(), self.pop()
-                    self.push(a << b)
-                
-                elif opcode == VMOpcode.SHR:
-                    b, a = self.pop(), self.pop()
-                    self.push(a >> b)
-                
-                elif opcode == VMOpcode.LT:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a < b else 0)
-                
-                elif opcode == VMOpcode.LE:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a <= b else 0)
-                
-                elif opcode == VMOpcode.GT:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a > b else 0)
-                
-                elif opcode == VMOpcode.GE:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a >= b else 0)
-                
-                elif opcode == VMOpcode.EQ:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a == b else 0)
-                
-                elif opcode == VMOpcode.NE:
-                    b, a = self.pop(), self.pop()
-                    self.push(1 if a != b else 0)
-                
-                elif opcode == VMOpcode.JUMP:
-                    if arg is None or arg < 0 or arg >= len(self.code):
-                        raise RuntimeError(f"Invalid jump target: {arg}")
-                    self.pc = arg
-                
-                elif opcode == VMOpcode.JUMP_IF_FALSE:
-                    condition = self.pop()
-                    if condition == 0:
-                        if arg is None or arg < 0 or arg >= len(self.code):
-                            raise RuntimeError(f"Invalid jump target: {arg}")
-                        self.pc = arg
-                
-                elif opcode == VMOpcode.JUMP_IF_TRUE:
-                    condition = self.pop()
-                    if condition != 0:
-                        if arg is None or arg < 0 or arg >= len(self.code):
-                            raise RuntimeError(f"Invalid jump target: {arg}")
-                        self.pc = arg
-                
-                elif opcode == VMOpcode.CALL:
-                    # Simple function call (not fully implemented yet)
-                    self.call_stack.append(self.pc)
-                    if arg is None or arg < 0 or arg >= len(self.code):
-                        raise RuntimeError(f"Invalid call target: {arg}")
-                    self.pc = arg
-                
-                elif opcode == VMOpcode.RETURN:
-                    if self.call_stack:
-                        self.pc = self.call_stack.pop()
-                    else:
-                        # No more calls - function returns
-                        return self.pop() if self.stack else 0
-                
-                elif opcode == VMOpcode.DUP:
-                    val = self.stack[-1] if self.stack else 0
-                    self.push(val)
-                
-                elif opcode == VMOpcode.POP:
-                    self.pop()
-                
-                elif opcode == VMOpcode.SWAP:
-                    if len(self.stack) >= 2:
-                        b, a = self.pop(), self.pop()
-                        self.push(b)
-                        self.push(a)
-                
-                elif opcode == VMOpcode.NOP:
-                    pass  # No operation
-                
-                elif opcode == VMOpcode.HALT:
-                    return self.stack[-1] if self.stack else 0
-                
+        try:
+            # Handle Constant (Python 3.8+)
+            if isinstance(expr, ast.Constant):
+                value = expr.value
+                if isinstance(value, (int, bool)):
+                    self.emit(VMOpcodeBase.LOAD_CONST, int(value))
+                elif isinstance(value, float):
+                    self.emit(VMOpcodeBase.LOAD_CONST, int(value))
+                elif value is None:
+                    self.emit(VMOpcodeBase.LOAD_CONST, 0)
                 else:
-                    raise RuntimeError(f"Unknown opcode: {opcode}")
-                    
-            except IndexError as e:
-                raise RuntimeError(f"Stack error at PC={self.pc-1}: {e}")
-            except Exception as e:
-                raise RuntimeError(f"VM error at PC={self.pc-1}, opcode={opcode.name}: {e}")
-        
-        if cycles >= max_cycles:
-            raise RuntimeError("Max cycles exceeded - possible infinite loop")
-        
-        return self.stack[-1] if self.stack else 0
+                    raise CompilationError(f"Unsupported constant type: {type(value)}")
+            
+            elif isinstance(expr, ast.Num):
+                self.emit(VMOpcodeBase.LOAD_CONST, int(expr.n))
+            
+            elif isinstance(expr, ast.NameConstant):
+                if expr.value is True:
+                    self.emit(VMOpcodeBase.LOAD_CONST, 1)
+                elif expr.value is False:
+                    self.emit(VMOpcodeBase.LOAD_CONST, 0)
+                elif expr.value is None:
+                    self.emit(VMOpcodeBase.LOAD_CONST, 0)
+            
+            elif isinstance(expr, ast.Name):
+                var_id = self._get_var_id(expr.id)
+                self.emit(VMOpcodeBase.LOAD_VAR, var_id)
+            
+            elif isinstance(expr, ast.BinOp):
+                self._compile_expr(expr.left)
+                self._compile_expr(expr.right)
+                self._compile_binop(expr.op)
+            
+            elif isinstance(expr, ast.UnaryOp):
+                self._compile_expr(expr.operand)
+                if isinstance(expr.op, ast.USub):
+                    self.emit(VMOpcodeBase.NEG)
+                elif isinstance(expr.op, ast.Not):
+                    self.emit(VMOpcodeBase.NOT)
+                elif isinstance(expr.op, ast.UAdd):
+                    pass
+                elif isinstance(expr.op, ast.Invert):
+                    self.emit(VMOpcodeBase.NOT)
+            
+            elif isinstance(expr, ast.Compare):
+                if len(expr.ops) == 1 and len(expr.comparators) == 1:
+                    self._compile_expr(expr.left)
+                    self._compile_expr(expr.comparators[0])
+                    self._compile_compare(expr.ops[0])
+                else:
+                    self._compile_expr(expr.left)
+                    for i, (op, comparator) in enumerate(zip(expr.ops, expr.comparators)):
+                        self.emit(VMOpcodeBase.DUP)
+                        self._compile_expr(comparator)
+                        self._compile_compare(op)
+                        if i < len(expr.ops) - 1:
+                            self.emit(VMOpcodeBase.AND)
+            
+            elif isinstance(expr, ast.BoolOp):
+                if isinstance(expr.op, ast.And):
+                    self._compile_expr(expr.values[0])
+                    for value in expr.values[1:]:
+                        self.emit(VMOpcodeBase.DUP)
+                        skip_jump = len(self.bytecode)
+                        self.emit(VMOpcodeBase.JUMP_IF_FALSE, 0)
+                        self.emit(VMOpcodeBase.POP)
+                        self._compile_expr(value)
+                        skip_pos = len(self.bytecode)
+                        self.bytecode[skip_jump] = (VMOpcodeBase.JUMP_IF_FALSE, skip_pos)
+                
+                elif isinstance(expr.op, ast.Or):
+                    self._compile_expr(expr.values[0])
+                    for value in expr.values[1:]:
+                        self.emit(VMOpcodeBase.DUP)
+                        skip_jump = len(self.bytecode)
+                        self.emit(VMOpcodeBase.JUMP_IF_TRUE, 0)
+                        self.emit(VMOpcodeBase.POP)
+                        self._compile_expr(value)
+                        skip_pos = len(self.bytecode)
+                        self.bytecode[skip_jump] = (VMOpcodeBase.JUMP_IF_TRUE, skip_pos)
+            
+            else:
+                raise CompilationError(f"Unsupported expression type: {type(expr).__name__}")
+                
+        except Exception as e:
+            raise CompilationError(f"Error compiling expression {ast.dump(expr)}: {e}")
     
-    def compile_and_execute(self, func_def: ast.FunctionDef, args: List[int]) -> int:
-        """Compile function and execute with arguments"""
-        bytecode = self.compiler.compile_function(func_def)
-        self.load_code(bytecode, args)
-        return self.execute()
+    def _compile_binop(self, op: ast.operator):
+        """Compile binary operator"""
+        op_map = {
+            ast.Add: VMOpcodeBase.ADD,
+            ast.Sub: VMOpcodeBase.SUB,
+            ast.Mult: VMOpcodeBase.MUL,
+            ast.Div: VMOpcodeBase.DIV,
+            ast.FloorDiv: VMOpcodeBase.DIV,
+            ast.Mod: VMOpcodeBase.MOD,
+            ast.BitAnd: VMOpcodeBase.AND,
+            ast.BitOr: VMOpcodeBase.OR,
+            ast.BitXor: VMOpcodeBase.XOR,
+            ast.LShift: VMOpcodeBase.SHL,
+            ast.RShift: VMOpcodeBase.SHR,
+        }
+        
+        op_type = type(op)
+        if op_type in op_map:
+            self.emit(op_map[op_type])
+        else:
+            raise CompilationError(f"Unsupported binary operator: {op_type.__name__}")
     
-    def disassemble(self, code: List[Tuple[VMOpcode, Optional[int]]] = None) -> str:
-        """Disassemble bytecode to human-readable form"""
-        if code is None:
-            code = self.code
+    def _compile_compare(self, op: ast.cmpop):
+        """Compile comparison operator"""
+        op_map = {
+            ast.Lt: VMOpcodeBase.LT,
+            ast.LtE: VMOpcodeBase.LE,
+            ast.Gt: VMOpcodeBase.GT,
+            ast.GtE: VMOpcodeBase.GE,
+            ast.Eq: VMOpcodeBase.EQ,
+            ast.NotEq: VMOpcodeBase.NE,
+        }
         
-        lines = ["Bytecode Disassembly:", "=" * 50]
-        for i, (opcode, arg) in enumerate(code):
-            arg_str = f" {arg}" if arg is not None else ""
-            # Show stack depth if available
-            depth_str = ""
-            if hasattr(self.compiler, 'stack_depths') and i in self.compiler.stack_depths:
-                depth_str = f" [stack={self.compiler.stack_depths[i]}]"
-            lines.append(f"{i:4d}: {opcode.name:16}{arg_str}{depth_str}")
+        op_type = type(op)
+        if op_type in op_map:
+            self.emit(op_map[op_type])
+        else:
+            raise CompilationError(f"Unsupported comparison operator: {op_type.__name__}")
+    
+    def _compile_if(self, stmt: ast.If):
+        """Compile if statement"""
+        self._compile_expr(stmt.test)
         
-        lines.append("=" * 50)
-        if hasattr(self.compiler, 'max_stack_depth'):
-            lines.append(f"Max stack depth: {self.compiler.max_stack_depth}")
+        jump_to_else = len(self.bytecode)
+        self.emit(VMOpcodeBase.JUMP_IF_FALSE, 0)
+        
+        for s in stmt.body:
+            self._compile_stmt(s)
+        
+        if stmt.orelse:
+            jump_to_end = len(self.bytecode)
+            self.emit(VMOpcodeBase.JUMP, 0)
+            
+            else_pos = len(self.bytecode)
+            self.bytecode[jump_to_else] = (VMOpcodeBase.JUMP_IF_FALSE, else_pos)
+            
+            for s in stmt.orelse:
+                self._compile_stmt(s)
+            
+            end_pos = len(self.bytecode)
+            self.bytecode[jump_to_end] = (VMOpcodeBase.JUMP, end_pos)
+        else:
+            end_pos = len(self.bytecode)
+            self.bytecode[jump_to_else] = (VMOpcodeBase.JUMP_IF_FALSE, end_pos)
+    
+    def _compile_while(self, stmt: ast.While):
+        """Compile while loop"""
+        loop_start = len(self.bytecode)
+        
+        self._compile_expr(stmt.test)
+        
+        jump_to_end = len(self.bytecode)
+        self.emit(VMOpcodeBase.JUMP_IF_FALSE, 0)
+        
+        for s in stmt.body:
+            self._compile_stmt(s)
+        
+        self.emit(VMOpcodeBase.JUMP, loop_start)
+        
+        end_pos = len(self.bytecode)
+        self.bytecode[jump_to_end] = (VMOpcodeBase.JUMP_IF_FALSE, end_pos)
+    
+    def disassemble(self) -> str:
+        """Disassemble bytecode for debugging"""
+        lines = []
+        lines.append(f"Function: {self.function_name}")
+        lines.append(f"Parameters: {', '.join(self.param_names)}")
+        lines.append(f"Variables: {self.var_map}")
+        lines.append(f"Instructions: {len(self.bytecode)}")
+        lines.append("")
+        
+        for i, (opcode, arg) in enumerate(self.bytecode):
+            if arg is not None:
+                lines.append(f"{i:4d}: {opcode.name:20s} {arg}")
+            else:
+                lines.append(f"{i:4d}: {opcode.name}")
         
         return "\n".join(lines)
-    
-    def bytecode_to_c_array(self, code: List[Tuple[VMOpcode, Optional[int]]]) -> str:
-        """Convert bytecode to C array initializer"""
-        bytes_list = []
-        for opcode, arg in code:
-            bytes_list.append(f"0x{opcode.value:02x}")
-            if arg is not None:
-                # Encode as 4-byte little-endian
-                bytes_list.append(f"0x{arg & 0xFF:02x}")
-                bytes_list.append(f"0x{(arg >> 8) & 0xFF:02x}")
-                bytes_list.append(f"0x{(arg >> 16) & 0xFF:02x}")
-                bytes_list.append(f"0x{(arg >> 24) & 0xFF:02x}")
-            else:
-                bytes_list.extend(["0x00", "0x00", "0x00", "0x00"])
-        
-        return "{" + ", ".join(bytes_list) + "}"
-    
-    def generate_vm_runtime(self) -> str:
-        """Generate complete C VM runtime"""
-        if not self.enabled:
-            return ""
-        
-        return """
-// ============================================================================
-// VM Runtime (Stack-based Bytecode Interpreter)
-// ============================================================================
 
-typedef struct {
+
+def generate_c_runtime(mapping: OpcodeMapping, function_name: str = "vm_execute") -> str:
+    """
+    Generate C runtime - CRITICAL FIX: Properly decode bytecode format
+    The bytecode format from main.py is: [opcode:1byte][arg:4bytes] repeated
+    """
+    
+    # Generate opcode case statements
+    opcode_cases = ""
+    
+    op_handlers = {
+        VMOpcodeBase.LOAD_CONST.value: "if (vm->sp < 1024) vm->stack[vm->sp++] = arg;",
+        VMOpcodeBase.LOAD_VAR.value: "if (vm->sp < 1024 && arg < 256) vm->stack[vm->sp++] = vm->vars[arg];",
+        VMOpcodeBase.STORE_VAR.value: "if (vm->sp > 0 && arg < 256) vm->vars[arg] = vm->stack[--vm->sp];",
+        VMOpcodeBase.LOAD_PARAM.value: "if (vm->sp < 1024 && arg < vm->param_count) vm->stack[vm->sp++] = vm->params[arg]; else if (vm->sp < 1024) vm->stack[vm->sp++] = 0;",
+        VMOpcodeBase.ADD.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a + b; }",
+        VMOpcodeBase.SUB.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a - b; }",
+        VMOpcodeBase.MUL.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a * b; }",
+        VMOpcodeBase.DIV.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; if (b != 0) vm->stack[vm->sp++] = a / b; else vm->stack[vm->sp++] = 0; }",
+        VMOpcodeBase.MOD.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; if (b != 0) vm->stack[vm->sp++] = a % b; else vm->stack[vm->sp++] = 0; }",
+        VMOpcodeBase.NEG.value: "if (vm->sp > 0) vm->stack[vm->sp-1] = -vm->stack[vm->sp-1];",
+        VMOpcodeBase.AND.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a & b; }",
+        VMOpcodeBase.OR.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a | b; }",
+        VMOpcodeBase.XOR.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a ^ b; }",
+        VMOpcodeBase.NOT.value: "if (vm->sp > 0) vm->stack[vm->sp-1] = ~vm->stack[vm->sp-1];",
+        VMOpcodeBase.SHL.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a << (b & 0x3F); }",
+        VMOpcodeBase.SHR.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = a >> (b & 0x3F); }",
+        VMOpcodeBase.LT.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a < b) ? 1 : 0; }",
+        VMOpcodeBase.LE.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a <= b) ? 1 : 0; }",
+        VMOpcodeBase.GT.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a > b) ? 1 : 0; }",
+        VMOpcodeBase.GE.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a >= b) ? 1 : 0; }",
+        VMOpcodeBase.EQ.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a == b) ? 1 : 0; }",
+        VMOpcodeBase.NE.value: "if (vm->sp >= 2) { int64_t b = vm->stack[--vm->sp]; int64_t a = vm->stack[--vm->sp]; vm->stack[vm->sp++] = (a != b) ? 1 : 0; }",
+        VMOpcodeBase.JUMP.value: "vm->pc = arg;",
+        VMOpcodeBase.JUMP_IF_FALSE.value: "if (vm->sp > 0) { int64_t cond = vm->stack[--vm->sp]; if (!cond) vm->pc = arg; }",
+        VMOpcodeBase.JUMP_IF_TRUE.value: "if (vm->sp > 0) { int64_t cond = vm->stack[--vm->sp]; if (cond) vm->pc = arg; }",
+        VMOpcodeBase.RETURN.value: "if (vm->sp > 0) return vm->stack[--vm->sp]; return 0;",
+        VMOpcodeBase.DUP.value: "if (vm->sp > 0 && vm->sp < 1024) { vm->stack[vm->sp] = vm->stack[vm->sp-1]; vm->sp++; }",
+        VMOpcodeBase.POP.value: "if (vm->sp > 0) vm->sp--;",
+        VMOpcodeBase.SWAP.value: "if (vm->sp >= 2) { int64_t tmp = vm->stack[vm->sp-1]; vm->stack[vm->sp-1] = vm->stack[vm->sp-2]; vm->stack[vm->sp-2] = tmp; }",
+        VMOpcodeBase.NOP.value: "/* no-op */",
+    }
+    
+    for base_op, handler in op_handlers.items():
+        opcode_cases += f"            case 0x{base_op:02x}: {handler} break;\n"
+    
+    return f'''// Complete Fix VM Runtime - Auto-generated
+// Version: {__version__}
+#include <stdint.h>
+#include <string.h>
+
+typedef int64_t int64;
+
+typedef struct {{
     int64 stack[1024];
     int64 vars[256];
-    int64 params[16];  // Function parameters
+    int64 params[16];
     int sp;
     int pc;
     int param_count;
-} VM;
+}} VM;
 
-static int64 vm_execute(VM* vm, const unsigned char* code, int code_len, int64* input_params, int param_count) {
+static VM _vm_instance = {{0}};
+
+int64 {function_name}(VM* vm, const unsigned char* code, int code_len,
+                      int64* input_params, int param_count) {{
+    // Initialize VM state
     vm->pc = 0;
     vm->sp = 0;
     vm->param_count = param_count;
+    memset(vm->vars, 0, sizeof(vm->vars));
     
     // Load parameters
-    for (int i = 0; i < param_count && i < 16; i++) {
+    for (int i = 0; i < param_count && i < 16; i++) {{
         vm->params[i] = input_params[i];
-    }
+    }}
     
-    int max_cycles = 1000000;
+    int max_cycles = 10000000;
     int cycles = 0;
     
-    while (vm->pc < code_len && cycles < max_cycles) {
+    // CRITICAL: Bytecode format is [opcode:1][arg:4] repeated
+    // Each instruction is 5 bytes total
+    int num_instructions = code_len / 5;
+    
+    while (vm->pc < num_instructions && cycles < max_cycles) {{
         cycles++;
         
-        unsigned char op = code[vm->pc++];
+        // Read opcode (1 byte)
+        int offset = vm->pc * 5;
+        unsigned char opcode = code[offset];
         
-        // Read 4-byte argument (little-endian)
-        int64 arg = 0;
-        if (vm->pc + 3 < code_len) {
-            arg = (int64)(unsigned char)code[vm->pc] | 
-                  ((int64)(unsigned char)code[vm->pc+1] << 8) | 
-                  ((int64)(unsigned char)code[vm->pc+2] << 16) | 
-                  ((int64)(unsigned char)code[vm->pc+3] << 24);
-            vm->pc += 4;
-        }
+        // Read argument (4 bytes, little-endian, signed)
+        int32_t arg = 0;
+        arg |= ((int32_t)code[offset + 1] << 0);
+        arg |= ((int32_t)code[offset + 2] << 8);
+        arg |= ((int32_t)code[offset + 3] << 16);
+        arg |= ((int32_t)code[offset + 4] << 24);
         
-        switch (op) {
-            case 0x01: // LOAD_CONST
-                if (vm->sp < 1024) vm->stack[vm->sp++] = arg;
-                break;
-            case 0x02: // LOAD_VAR
-                if (vm->sp < 1024 && arg < 256) vm->stack[vm->sp++] = vm->vars[arg];
-                break;
-            case 0x03: // STORE_VAR
-                if (vm->sp > 0 && arg < 256) vm->vars[arg] = vm->stack[--vm->sp];
-                break;
-            case 0x04: // LOAD_PARAM
-                if (vm->sp < 1024 && arg < 16 && arg < vm->param_count) {
-                    vm->stack[vm->sp++] = vm->params[arg];
-                } else if (vm->sp < 1024) {
-                    vm->stack[vm->sp++] = 0;  // Default for out-of-bounds
-                }
-                break;
-            case 0x10: // ADD
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a + b;
-                }
-                break;
-            case 0x11: // SUB
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a - b;
-                }
-                break;
-            case 0x12: // MUL
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a * b;
-                }
-                break;
-            case 0x13: // DIV
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    if (b != 0) vm->stack[vm->sp++] = a / b;
-                    else vm->stack[vm->sp++] = 0;
-                }
-                break;
-            case 0x14: // MOD
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    if (b != 0) vm->stack[vm->sp++] = a % b;
-                    else vm->stack[vm->sp++] = 0;
-                }
-                break;
-            case 0x15: // NEG
-                if (vm->sp > 0) vm->stack[vm->sp-1] = -vm->stack[vm->sp-1];
-                break;
-            case 0x20: // AND
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a & b;
-                }
-                break;
-            case 0x21: // OR
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a | b;
-                }
-                break;
-            case 0x22: // XOR
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a ^ b;
-                }
-                break;
-            case 0x23: // NOT
-                if (vm->sp > 0) vm->stack[vm->sp-1] = ~vm->stack[vm->sp-1];
-                break;
-            case 0x24: // SHL
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a << b;
-                }
-                break;
-            case 0x25: // SHR
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a >> b;
-                }
-                break;
-            case 0x30: // LT
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a < b ? 1 : 0;
-                }
-                break;
-            case 0x31: // LE
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a <= b ? 1 : 0;
-                }
-                break;
-            case 0x32: // GT
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a > b ? 1 : 0;
-                }
-                break;
-            case 0x33: // GE
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a >= b ? 1 : 0;
-                }
-                break;
-            case 0x34: // EQ
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a == b ? 1 : 0;
-                }
-                break;
-            case 0x35: // NE
-                if (vm->sp >= 2) {
-                    int64 b = vm->stack[--vm->sp];
-                    int64 a = vm->stack[--vm->sp];
-                    vm->stack[vm->sp++] = a != b ? 1 : 0;
-                }
-                break;
-            case 0x40: // JUMP
-                if (arg >= 0 && arg < code_len) vm->pc = arg;
-                break;
-            case 0x41: // JUMP_IF_FALSE
-                if (vm->sp > 0) {
-                    int64 val = vm->stack[--vm->sp];
-                    if (val == 0 && arg >= 0 && arg < code_len) vm->pc = arg;
-                }
-                break;
-            case 0x42: // JUMP_IF_TRUE
-                if (vm->sp > 0) {
-                    int64 val = vm->stack[--vm->sp];
-                    if (val != 0 && arg >= 0 && arg < code_len) vm->pc = arg;
-                }
-                break;
-            case 0x51: // RETURN
-                if (vm->sp > 0) return vm->stack[--vm->sp];
-                return 0;
-            case 0x60: // DUP
-                if (vm->sp > 0 && vm->sp < 1024) {
-                    vm->stack[vm->sp] = vm->stack[vm->sp-1];
-                    vm->sp++;
-                }
-                break;
-            case 0x61: // POP
-                if (vm->sp > 0) vm->sp--;
-                break;
-            case 0x62: // SWAP
-                if (vm->sp >= 2) {
-                    int64 tmp = vm->stack[vm->sp-1];
-                    vm->stack[vm->sp-1] = vm->stack[vm->sp-2];
-                    vm->stack[vm->sp-2] = tmp;
-                }
-                break;
-            case 0xFE: // NOP
-                break;
-            case 0xFF: // HALT
-                if (vm->sp > 0) return vm->stack[--vm->sp];
-                return 0;
+        vm->pc++;
+        
+        // Execute instruction (NO MAPPING - use raw opcodes)
+        switch (opcode) {{
+{opcode_cases}
             default:
-                return 0;  // Unknown opcode
-        }
-    }
-    
-    if (cycles >= max_cycles) {
-        return 0;  // Max cycles exceeded
-    }
+                break;
+        }}
+    }}
     
     return vm->sp > 0 ? vm->stack[--vm->sp] : 0;
-}
+}}
 
-// VM instance for function calls
-static VM _vm_instance = {0};
+int64 execute_vm(const unsigned char* code, int code_len, int64* params, int param_count) {{
+    return {function_name}(&_vm_instance, code, code_len, params, param_count);
+}}
+'''
 
-"""
+
+class VirtualMachine:
+    """VM compatible with main.py"""
+    
+    def __init__(self, security_level = None):
+        if security_level is None:
+            security_level = SecurityLevel.STANDARD
+        self.security_level = security_level
+        self.compiler = VMCompiler()
+        self.mapping = self.compiler.mapping
+        self.enabled = (security_level == SecurityLevel.PARANOID)
+    
+    def compile_function(self, func_def: ast.FunctionDef) -> List[Tuple[VMOpcodeBase, Optional[int]]]:
+        """Compile function to bytecode"""
+        return self.compiler.compile_function(func_def)
+    
+    def generate_c_runtime(self) -> str:
+        """Generate C runtime code"""
+        return generate_c_runtime(self.mapping, "vm_execute")
+    
+    def generate_vm_runtime(self) -> str:
+        """Alias for main.py compatibility"""
+        return self.generate_c_runtime()
+
+
+class VMOpcode:
+    """Legacy compatibility"""
+    pass
+
+
+__all__ = [
+    'VMCompiler',
+    'VirtualMachine',
+    'VMOpcode',
+    'generate_c_runtime',
+]

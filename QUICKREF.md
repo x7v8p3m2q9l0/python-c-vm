@@ -1,6 +1,6 @@
 # Quick Reference Card
 ## Python-to-C Transpiler
-
+# NOT UP-TO-DATE
 ---
 
 ## Installation
@@ -131,7 +131,7 @@ python mymodule.py 0 10       # Same index-based
 
 ## Supported Python Features
 
-✅ **Supported**:
+**Supported**:
 - Integer arithmetic (int64)
 - While loops
 - If/else statements  
@@ -232,7 +232,7 @@ python math.py 2 48 18 # gcd(48, 18) = 6
 $ python main.py --test-vm
 
 ======================================================================
-Enhanced VM Test Suite
+VM Test Suite
 ======================================================================
 
 [Test] Arithmetic: 5 * 10 + 3
@@ -454,21 +454,15 @@ cat CHANGELOG.md
 
 ## What's New in v6.0.0
 
-### Fixed
-- ✅ **VM Now Works**
-- ✅ **30+ VM Opcodes** (was 11)
-- ✅ **Variable Bug Fixed** (no more redeclaration)
-
 ### Added
-- ✅ **--p2c-s2c** flag (standalone modules)
-- ✅ **--test-vm** flag (VM testing)
-- ✅ **p2c_s2c()** function (API)
-- ✅ **Enhanced VM** (30+ opcodes)
+- **--p2c-s2c** flag (standalone modules)
+- **--test-vm** flag (VM testing)
+- **p2c_s2c()** function (API)
 
 ### Improved
-- ✅ **Better error messages**
-- ✅ **Comprehensive testing**
-- ✅ **Updated documentation**
+- **Better error messages**
+- **Comprehensive testing**
+- **Updated documentation**
 
 ---
 

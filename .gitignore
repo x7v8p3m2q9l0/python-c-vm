@@ -1,2 +1,15 @@
+# git thingy
 .git
+
+# decompbreak things
+modules/workspace
+test2.py
+
+# ignore in development modules
+
+modules/license_system.py
+modules/security_v2.py
+
+# caches
 __pycache__
+modules/__pycache__

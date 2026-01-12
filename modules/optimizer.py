@@ -1,13 +1,11 @@
+
 import ast
 from typing import List
 class Optimizer:
-    """Phase 8: Advanced optimizations"""
-    
     def __init__(self):
         self.constants = {}
     
     def constant_folding(self, node: ast.expr) -> ast.expr:
-        """Fold constant expressions at compile time"""
         if isinstance(node, ast.BinOp):
             if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
                 left_val = node.left.value

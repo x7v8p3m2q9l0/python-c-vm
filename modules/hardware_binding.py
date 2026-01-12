@@ -1,19 +1,62 @@
 import hashlib
 import sys
 import time
+import subprocess
 from typing import Optional
+
 class HardwareBinding:
     @staticmethod
     def get_cpu_id() -> str:
-        """Get CPU identifier"""
+        """Get stable CPU identifier - IMPROVED"""
         try:
             if sys.platform == "linux":
-                with open('/proc/cpuinfo', 'r') as f:
-                    for line in f:
-                        if 'processor' in line:
-                            return hashlib.sha256(line.encode()).hexdigest()[:16]
-        except:
+                # Use multiple CPU features for stability
+                identifiers = []
+                try:
+                    with open('/proc/cpuinfo', 'r') as f:
+                        for line in f:
+                            # Use stable features
+                            if any(key in line for key in ['model name', 'cpu family', 'stepping', 'microcode']):
+                                identifiers.append(line.strip())
+                except:
+                    pass
+                
+                if identifiers:
+                    combined = ''.join(sorted(identifiers))
+                    return hashlib.sha256(combined.encode()).hexdigest()[:16]
+            
+            elif sys.platform == "darwin":
+                try:
+                    result = subprocess.run(
+                        ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        return hashlib.sha256(result.stdout.encode()).hexdigest()[:16]
+                except:
+                    pass
+            
+            elif sys.platform.startswith("win"):
+                try:
+                    result = subprocess.run(
+                        ['wmic', 'cpu', 'get', 'ProcessorId'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        # Skip header line
+                        proc_id = result.stdout.strip().split('\n')[-1].strip()
+                        if proc_id:
+                            return hashlib.sha256(proc_id.encode()).hexdigest()[:16]
+                except:
+                    pass
+        
+        except Exception:
             pass
+        
         return "generic_cpu"
     
     @staticmethod
@@ -51,4 +94,3 @@ class HardwareBinding:
             return False
         
         return True
-

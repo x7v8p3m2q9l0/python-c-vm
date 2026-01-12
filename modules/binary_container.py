@@ -9,6 +9,7 @@ import platform
 import time
 import zlib
 import hashlib
+import secrets
 
 class BinaryContainer:
     def __init__(self, key: Optional[bytes] = None):
@@ -23,12 +24,12 @@ class BinaryContainer:
     
     def _derive_key(self) -> bytes:
         """Derive encryption key from environment"""
-        # Environment-based key derivation
         env_factors = [
             str(os.getpid()),
             platform.node(),
             platform.processor(),
             str(time.time()),
+            secrets.token_hex(16),  # Add randomness
         ]
         key_material = ''.join(env_factors).encode()
         return hashlib.sha256(key_material).digest()
@@ -38,31 +39,69 @@ class BinaryContainer:
         """Add section to container"""
         processed_data = data
         
-        # Compress FIRST if requested (compresses better before encryption)
+        # Compress FIRST if requested
         if compress:
             processed_data = zlib.compress(processed_data, level=9)
         
-        # Encrypt SECOND if requested (after compression)
+        # Encrypt SECOND if requested (FIXED: No key repetition)
         if encrypt:
-            processed_data = self._encrypt(processed_data)
+            processed_data = self._encrypt_secure(processed_data)
         
         section = BinarySection(name, processed_data, compress, encrypt)
         self.sections.append(section)
     
-    def _encrypt(self, data: bytes) -> bytes:
-        """Encrypt data using XOR with key stream (simple but effective)"""
-        key_stream = hashlib.sha256(self.key).digest()
+    def _encrypt_secure(self, data: bytes) -> bytes:
+        """
+        FIXED: Secure encryption with extended key stream
+        Prevents key repetition vulnerability
+        """
         encrypted = bytearray()
         
+        # Generate unique nonce for this encryption
+        nonce = secrets.token_bytes(16)
+        encrypted.extend(nonce)
+        
         for i, byte in enumerate(data):
-            key_byte = key_stream[i % len(key_stream)]
+            # Extend key by hashing with position AND nonce
+            # This prevents key repetition attacks
+            extended_key = hashlib.sha256(
+                self.key + nonce + i.to_bytes(4, 'little')
+            ).digest()
+            key_byte = extended_key[0]  # Use first byte of hash
             encrypted.append(byte ^ key_byte)
         
         return bytes(encrypted)
     
+    def _decrypt_secure(self, data: bytes) -> bytes:
+        """
+        FIXED: Decrypt with extended key stream
+        """
+        if len(data) < 16:
+            raise IntegrityError("Invalid encrypted data")
+        
+        # Extract nonce
+        nonce = data[:16]
+        ciphertext = data[16:]
+        
+        decrypted = bytearray()
+        for i, byte in enumerate(ciphertext):
+            # Same key extension as encryption
+            extended_key = hashlib.sha256(
+                self.key + nonce + i.to_bytes(4, 'little')
+            ).digest()
+            key_byte = extended_key[0]
+            decrypted.append(byte ^ key_byte)
+        
+        return bytes(decrypted)
+    
+    # Keep old methods for backward compatibility
+    def _encrypt(self, data: bytes) -> bytes:
+        """Legacy: Use secure version"""
+        return self._encrypt_secure(data)
+    
     def _decrypt(self, data: bytes) -> bytes:
-        """Decrypt data (XOR is symmetric)"""
-        return self._encrypt(data)  # XOR decryption is same as encryption
+        """Legacy: Use secure version"""
+        return self._decrypt_secure(data)
     
     def pack(self) -> bytes:
         """Pack container to bytes"""
@@ -164,9 +203,9 @@ class BinaryContainer:
             if stored_checksum != actual_checksum:
                 raise IntegrityError(f"Section checksum mismatch: {name}")
             
-            # Decrypt if needed
+            # Decrypt if needed (FIXED: uses secure decryption)
             if encrypted:
-                section_data = self._decrypt(section_data)
+                section_data = self._decrypt_secure(section_data)
             
             # Decompress if needed
             if compressed:

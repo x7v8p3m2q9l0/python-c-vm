@@ -44,3 +44,43 @@ class SymbolTable:
     def get_original(self, obfuscated: str) -> Optional[str]:
         """Get original name from obfuscated"""
         return self.reverse.get(obfuscated)
+class Cache:
+    def __init__(self, max_size: int = 128):
+        self.cache = {}
+        self.max_size = max_size
+        self.access_order = []
+    
+    def get(self, key: str):
+        """Get cached value"""
+        if key in self.cache:
+            self.access_order.remove(key)
+            self.access_order.append(key)
+            return self.cache[key]
+        return None
+    
+    def set(self, key: str, value):
+        """Cache a value"""
+        if len(self.cache) >= self.max_size:
+            oldest = self.access_order.pop(0)
+            del self.cache[oldest]
+        
+        self.cache[key] = value
+        if key in self.access_order:
+            self.access_order.remove(key)
+        self.access_order.append(key)
+    
+    def clear(self):
+        """Clear cache"""
+        self.cache.clear()
+        self.access_order.clear()
+
+# Global cache instance
+_global_cache = Cache()
+
+def get_cached(key: str):
+    """Get from global cache"""
+    return _global_cache.get(key)
+
+def set_cached(key: str, value):
+    """Set in global cache"""
+    _global_cache.set(key, value)

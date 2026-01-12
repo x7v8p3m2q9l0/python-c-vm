@@ -3,7 +3,9 @@
 **Status**: Unsure.
 
 ---
-
+## SPPECIAl: Decompiler breaker (PyLingual)
+![PIC](thing.png)
+![LINK](https://pylingual.io/view_chimera?identifier=5b15f4eb6349261a4c9f09b51233ac90d3f58dd574e493d9eeed6cf91a9b75fa)
 ## Phase 1: Core Obfuscation
 
 ### Control-Flow Obfuscation
@@ -284,7 +286,7 @@
 
 ### Virtual Machine
 - [x] Stack-based architecture
-- [x] 30+ opcodes (enhanced from 11)
+- [x] More opcodes
 - [x] **Stack Operations**: LOAD_CONST, LOAD_VAR, STORE_VAR
 - [x] **Arithmetic**: ADD, SUB, MUL, DIV, MOD, NEG
 - [x] **Bitwise**: AND, OR, XOR, NOT, SHL, SHR
@@ -481,10 +483,10 @@
 
 ---
 
-## Bug Fixes ✅
+## Bug Fixes
 
 ### Fixed in v6.0.0
-- [x] **VM Not Working → FULLY WORKING** (30+ opcodes implemented)
+- [x] **VM Not Working → WORKING** (30+ opcodes implemented)
 - [x] **Variable Redeclaration** (tracked declarations per function)
 - [x] **Opaque Predicates** (no undeclared variables)
 - [x] **Metadata Serialization** (JSON instead of pickle)

@@ -130,7 +130,7 @@ python factorial_compiled.py 0 10
 
 ### VM Things
 
-**30+ Opcodes:**
+**Opcodes:**
 - Stack operations: LOAD_CONST, LOAD_VAR, STORE_VAR
 - Arithmetic: ADD, SUB, MUL, DIV, MOD, NEG
 - Bitwise: AND, OR, XOR, NOT, SHL, SHR
@@ -140,13 +140,13 @@ python factorial_compiled.py 0 10
 - Stack manipulation: DUP, POP, SWAP
 - Special: HALT
 
-**VM Methods:**
+<!-- **VM Methods:**
 ```python
 vm = VirtualMachine()
 vm.load_code(bytecode)         # Load program
 result = vm.execute()          # Run with cycle limit
 assembly = vm.disassemble()    # Debug view
-```
+``` -->
 
 ### p2c_s2c Function
 
@@ -523,7 +523,7 @@ python factorial_compiled.py 0 10
 
 ### VM
 
-**Hơn 30 Opcode:**
+**Opcodes:**
 
 * Ngăn xếp: LOAD_CONST, LOAD_VAR, STORE_VAR
 * Số học: ADD, SUB, MUL, DIV, MOD, NEG
@@ -534,14 +534,14 @@ python factorial_compiled.py 0 10
 * Ngăn xếp nâng cao: DUP, POP, SWAP
 * Đặc biệt: HALT
 
-**API VM:**
+<!-- **API VM:**
 
 ```python
 vm = VirtualMachine()
 vm.load_code(bytecode)
 result = vm.execute()
 assembly = vm.disassemble()
-```
+``` -->
 
 ### Hàm p2c_s2c
 
@@ -672,18 +672,18 @@ python factorial_compiled.py 0 10
 
 ### 虚拟机（VM）
 
-**30+ 指令：**
+**指令：**
 
 * 栈操作、算术、位运算、比较
 * 控制流、函数调用
 
-**VM API：**
+<!-- **VM API：**
 
 ```python
 vm.load_code(bytecode)
 vm.execute()
 vm.disassemble()
-```
+``` -->
 
 ### p2c_s2c API
 
