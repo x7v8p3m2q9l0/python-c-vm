@@ -1,3 +1,4 @@
+# Planning on rewriting this module to be more utilized. REASON: Mutations are relatively simple, Would benefit from more sophisticated transformations, and isnt used during compilation.
 import ast
 import secrets
 import hashlib
@@ -14,33 +15,11 @@ class MutationConfig:
     mutation_strength: int = 3  # 1-5
 
 class PolymorphicEngine:
-    """
-    Advanced polymorphic code engine with:
-    - Arithmetic mutations (ADD <-> SUB+NEG)
-    - Register/variable swapping
-    - Control flow mutations
-    - Junk code insertion
-    - Instruction reordering
-    - Equivalent instruction substitution
-    """
-    
     def __init__(self, config: Optional[MutationConfig] = None):
         self.config = config or MutationConfig()
         self.mutation_count = 0
     
-    # ================================================================
-    # ARITHMETIC MUTATIONS
-    # ================================================================
-    
     def mutate_arithmetic(self, expression: str) -> str:
-        """
-        Mutate arithmetic expressions to equivalent forms
-        
-        Examples:
-            x + y  ->  x - (-y)
-            x * 2  ->  x << 1
-            x / 2  ->  x >> 1
-        """
         if not self.config.enable_arithmetic:
             return expression
         
@@ -81,21 +60,8 @@ class PolymorphicEngine:
         
         return expression
     
-    # ================================================================
-    # CONSTANT MUTATIONS
-    # ================================================================
     
     def mutate_constant(self, value: int) -> str:
-        """
-        Mutate constant into equivalent expression
-        
-        Examples:
-            42 -> (43 - 1)
-            42 -> (21 * 2)
-            42 -> (84 >> 1)
-            42 -> (0x2A)
-            42 -> (42 ^ 17 ^ 17)
-        """
         mutations = [
             # Identity mutations
             f"({value})",
@@ -128,21 +94,7 @@ class PolymorphicEngine:
         self.mutation_count += 1
         return secrets.choice(mutations)
     
-    # ================================================================
-    # CONTROL FLOW MUTATIONS
-    # ================================================================
-    
     def mutate_if_statement(self, condition: str, true_block: str, false_block: str = "") -> str:
-        """
-        Mutate if-statement to equivalent forms
-        
-        Examples:
-            if (x > 0) { A } else { B }
-            ->
-            if (!(x <= 0)) { A } else { B }
-            ->
-            if (x <= 0) { B } else { A }
-        """
         if not self.config.enable_control_flow:
             if false_block:
                 return f"if ({condition}) {{\n{true_block}\n}} else {{\n{false_block}\n}}"
@@ -166,26 +118,14 @@ class PolymorphicEngine:
         self.mutation_count += 1
         return secrets.choice(mutations)
     
-    # ================================================================
-    # JUNK CODE INSERTION
-    # ================================================================
-    
     def generate_junk_code(self, num_lines: int = 3) -> List[str]:
-        """
-        Generate junk code that has no effect
-        
-        Examples:
-            int64 _junk = 0;
-            _junk = _junk + 1 - 1;
-            if (_junk == 0) { }
-        """
         if not self.config.enable_junk_code:
             return []
         
         junk_lines = []
         
         for i in range(num_lines):
-            junk_var = f"_j{secrets.randbelow(1000)}"
+            junk_var = f"_{secrets.randbelow(1000)}"
             
             junk_types = [
                 # Do-nothing arithmetic
@@ -212,16 +152,6 @@ class PolymorphicEngine:
     # ================================================================
     
     def mutate_register_allocation(self, code: str, var_map: Dict[str, str]) -> str:
-        """
-        Swap variable names (register allocation mutation)
-        
-        Args:
-            code: Code to mutate
-            var_map: Mapping of old_name -> new_name
-        
-        Returns:
-            Mutated code
-        """
         if not self.config.enable_register_swap:
             return code
         
@@ -234,21 +164,9 @@ class PolymorphicEngine:
         self.mutation_count += 1
         return mutated
     
-    # ================================================================
-    # INSTRUCTION REORDERING
-    # ================================================================
-    
     def mutate_instruction_order(self, instructions: List[str]) -> List[str]:
-        """
-        Reorder independent instructions
-        
-        Only reorders instructions that don't have dependencies
-        """
         if len(instructions) < 2:
             return instructions
-        
-        # Simple implementation: randomly swap adjacent independent instructions
-        # More sophisticated analysis would build dependency graph
         
         result = instructions.copy()
         
@@ -263,9 +181,6 @@ class PolymorphicEngine:
         return result
     
     def _are_independent(self, instr1: str, instr2: str) -> bool:
-        """Check if two instructions are independent (simplified)"""
-        # Very simplified - proper implementation would analyze data dependencies
-        # Don't reorder if either contains function calls, returns, or control flow
         keywords = ['return', 'if', 'while', 'for', 'goto', 'call']
         
         for keyword in keywords:
@@ -279,15 +194,6 @@ class PolymorphicEngine:
     # ================================================================
     
     def generate_opaque_predicate(self, always_true: bool = True) -> str:
-        """
-        Generate opaque predicate (condition with known result)
-        
-        Args:
-            always_true: If True, generate always-true predicate, else always-false
-        
-        Returns:
-            Condition string
-        """
         if always_true:
             predicates = [
                 "(x * x >= 0)",  # Always true for real numbers
@@ -307,21 +213,7 @@ class PolymorphicEngine:
         var_name = f"_v{secrets.randbelow(100)}"
         return predicate.replace('x', var_name)
     
-    # ================================================================
-    # POLYMORPHIC GENERATION
-    # ================================================================
-    
     def generate_variants(self, code: str, num_variants: int = 3) -> List[str]:
-        """
-        Generate multiple functionally equivalent variants of code
-        
-        Args:
-            code: Original code
-            num_variants: Number of variants to generate
-        
-        Returns:
-            List of code variants (including original)
-        """
         variants = [code]
         
         for _ in range(num_variants - 1):
@@ -341,7 +233,6 @@ class PolymorphicEngine:
         return variants
     
     def get_statistics(self) -> Dict[str, int]:
-        """Get mutation statistics"""
         return {
             'total_mutations': self.mutation_count,
             'mutation_strength': self.config.mutation_strength

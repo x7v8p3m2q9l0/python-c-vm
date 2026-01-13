@@ -4,7 +4,7 @@
 # decompbreak things
 modules/workspace
 test2.py
-
+test2.pyc
 # ignore in development modules
 
 modules/license_system.py

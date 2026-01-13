@@ -82,9 +82,6 @@ except ImportError:
     class CompilationError(Exception):
         pass
 
-__version__ = "6.2.0-complete-fix"
-
-
 class VMCompiler:
     """VM Compiler - Returns plain tuples, parameters work correctly"""
     
@@ -431,8 +428,7 @@ def generate_c_runtime(mapping: OpcodeMapping, function_name: str = "vm_execute"
     for base_op, handler in op_handlers.items():
         opcode_cases += f"            case 0x{base_op:02x}: {handler} break;\n"
     
-    return f'''// Complete Fix VM Runtime - Auto-generated
-// Version: {__version__}
+    return f'''
 #include <stdint.h>
 #include <string.h>
 

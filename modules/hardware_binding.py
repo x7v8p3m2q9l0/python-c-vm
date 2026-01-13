@@ -1,96 +1,114 @@
 import hashlib
-import sys
-import time
+import platform
 import subprocess
+import uuid
+import sys
 from typing import Optional
 
 class HardwareBinding:
+
+    # ---------- Low-level identifiers ----------
     @staticmethod
-    def get_cpu_id() -> str:
-        """Get stable CPU identifier - IMPROVED"""
+    def _get_tpm_id() -> str:
         try:
-            if sys.platform == "linux":
-                # Use multiple CPU features for stability
-                identifiers = []
-                try:
-                    with open('/proc/cpuinfo', 'r') as f:
-                        for line in f:
-                            # Use stable features
-                            if any(key in line for key in ['model name', 'cpu family', 'stepping', 'microcode']):
-                                identifiers.append(line.strip())
-                except:
-                    pass
-                
-                if identifiers:
-                    combined = ''.join(sorted(identifiers))
-                    return hashlib.sha256(combined.encode()).hexdigest()[:16]
-            
+            if sys.platform.startswith("win"):
+                out = subprocess.check_output(
+                    'wmic /namespace:\\\\root\\cimv2\\security\\microsofttpm path win32_tpm get ManufacturerId,ManufacturerVersion,SpecVersion',
+                    shell=True
+                ).decode()
+                return out.strip().replace("\n", "").replace(" ", "")
+
+            elif sys.platform == "linux":
+                out = subprocess.check_output(
+                    "cat /sys/class/tpm/tpm0/device/description",
+                    shell=True
+                ).decode().strip()
+                return out
+
             elif sys.platform == "darwin":
-                try:
-                    result = subprocess.run(
-                        ['sysctl', '-n', 'machdep.cpu.brand_string'],
-                        capture_output=True,
-                        text=True,
-                        timeout=2
-                    )
-                    if result.returncode == 0 and result.stdout:
-                        return hashlib.sha256(result.stdout.encode()).hexdigest()[:16]
-                except:
-                    pass
-            
-            elif sys.platform.startswith("win"):
-                try:
-                    result = subprocess.run(
-                        ['wmic', 'cpu', 'get', 'ProcessorId'],
-                        capture_output=True,
-                        text=True,
-                        timeout=2
-                    )
-                    if result.returncode == 0 and result.stdout:
-                        # Skip header line
-                        proc_id = result.stdout.strip().split('\n')[-1].strip()
-                        if proc_id:
-                            return hashlib.sha256(proc_id.encode()).hexdigest()[:16]
-                except:
-                    pass
-        
-        except Exception:
-            pass
-        
-        return "generic_cpu"
-    
-    @staticmethod
-    def get_mac_address() -> str:
-        """Get MAC address for binding"""
-        try:
-            import uuid
-            mac = uuid.getnode()
-            return hashlib.sha256(str(mac).encode()).hexdigest()[:16]
+                out = subprocess.check_output(
+                    ["system_profiler", "SPiBridgeDataType"]
+                ).decode()
+                return out.strip()
+
         except:
-            return "generic_mac"
-    
+            pass
+
+        return "no_tpm"
     @staticmethod
-    def generate_binding_key(bind_cpu: bool = False, bind_mac: bool = False) -> bytes:
-        """Generate hardware-bound encryption key"""
-        components = [str(time.time())]
-        
-        if bind_cpu:
-            components.append(HardwareBinding.get_cpu_id())
-        
-        if bind_mac:
-            components.append(HardwareBinding.get_mac_address())
-        
-        key_material = ''.join(components).encode()
-        return hashlib.sha256(key_material).digest()
-    
+    def _get_machine_id() -> str:
+        try:
+            if sys.platform.startswith("win"):
+                out = subprocess.check_output(
+                    "wmic csproduct get uuid", shell=True
+                ).decode().splitlines()
+                return out[1].strip()
+            elif sys.platform == "darwin":
+                out = subprocess.check_output(
+                    ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]
+                ).decode()
+                for line in out.splitlines():
+                    if "IOPlatformUUID" in line:
+                        return line.split('"')[-2]
+            else:
+                with open("/etc/machine-id") as f:
+                    return f.read().strip()
+        except:
+            return "unknown_machine"
+
     @staticmethod
-    def verify_hardware(expected_cpu: Optional[str] = None,
-                       expected_mac: Optional[str] = None) -> bool:
-        """Verify hardware matches expected values"""
-        if expected_cpu and HardwareBinding.get_cpu_id() != expected_cpu:
-            return False
-        
-        if expected_mac and HardwareBinding.get_mac_address() != expected_mac:
-            return False
-        
-        return True
+    def _get_disk_id() -> str:
+        try:
+            if sys.platform.startswith("win"):
+                out = subprocess.check_output(
+                    "wmic diskdrive get serialnumber", shell=True
+                ).decode().splitlines()
+                return out[1].strip()
+            elif sys.platform == "darwin":
+                out = subprocess.check_output(
+                    ["system_profiler", "SPStorageDataType"]
+                ).decode()
+                for line in out.splitlines():
+                    if "Serial Number" in line:
+                        return line.split(":")[-1].strip()
+        except:
+            pass
+        return "unknown_disk"
+
+    @staticmethod
+    def _get_cpu_signature() -> str:
+        return f"{platform.processor()}|{platform.machine()}"
+
+    @staticmethod
+    def _get_mac() -> str:
+        try:
+            return str(uuid.getnode())
+        except:
+            return "unknown_mac"
+
+    # ---------- Composite Fingerprint ----------
+
+    @staticmethod
+    def get_fingerprint() -> str:
+        parts = [
+            HardwareBinding._get_machine_id(),
+            HardwareBinding._get_disk_id(),
+            HardwareBinding._get_cpu_signature(),
+            HardwareBinding._get_mac(),
+            HardwareBinding._get_tpm_id(),
+            platform.node(),
+            platform.system()
+        ]
+        raw = "|".join(parts)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    # ---------- Public API ----------
+
+    @staticmethod
+    def generate_binding_key() -> bytes:
+        fingerprint = HardwareBinding.get_fingerprint()
+        return hashlib.sha256(fingerprint.encode()).digest()
+
+    @staticmethod
+    def verify_hardware(expected_fingerprint: str) -> bool:
+        return HardwareBinding.get_fingerprint() == expected_fingerprint
