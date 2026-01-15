@@ -1,14 +1,15 @@
 import ast
+from enum import IntEnum
 import py_compile
 import dis
 import sys
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Set, Tuple
 import secrets
 import marshal
 import types
 import random
-
+from dataclasses import dataclass
 
 sys.setrecursionlimit(50_000)
 
@@ -786,313 +787,612 @@ class MainBreaker:
         
         return funcs
 
+PY_VERSION = sys.version_info[:2]
+PY38_PLUS = PY_VERSION >= (3, 8)
+PY310_PLUS = PY_VERSION >= (3, 10)
+PY311_PLUS = PY_VERSION >= (3, 11)
 
-class BytecodeTransformer: 
-    def __init__(self):
-        self.py_version = sys.version_info[:2]
+
+class TransformIntensity(IntEnum):
+    NONE = 0
+    LIGHT = 1
+    MODERATE = 2
+    AGGRESSIVE = 3
+    EXTREME = 4  
+@dataclass
+class InstructionInfo:
+    offset: int
+    opcode: int
+    opname: str
+    arg: Optional[int]
+    argval: any
+    is_jump: bool
+    jump_target: Optional[int]
+    size: int  # Total size including CACHE entries
+
+class BytecodeTransformer:    
+    def __init__(self, verbose: bool = False, version: Optional[Tuple[int, int]] = None):
+        self.verbose = verbose
+        self.py_version = version or PY_VERSION
+        
+        # Opcode information
+        self.nop_opcode = dis.opmap.get('NOP', 9)
+        self.extended_arg_opcode = dis.opmap.get('EXTENDED_ARG', 144)
+        self.return_value_opcode = dis.opmap.get('RETURN_VALUE', 83)
+        
+        # Jump opcodes
+        self.jump_opcodes = set(dis.hasjrel) | set(dis.hasjabs)
+        self.rel_jump_opcodes = set(dis.hasjrel)
+        self.abs_jump_opcodes = set(dis.hasjabs)
+        
+        # Statistics
+        self.stats = {
+            'files_processed': 0,
+            'files_succeeded': 0,
+            'files_failed': 0,
+            'bytes_added': 0,
+            'constants_added': 0,
+        }
     
-    def read_pyc(self, pyc_path: Path) -> tuple:
-        with open(pyc_path, 'rb') as f:
-
-            magic = f.read(4)
-            
-            if self.py_version >= (3, 7):
-
-                flags = f.read(4)
-            
-            if self.py_version >= (3, 3):
+    def log(self, message: str, level: str = "INFO"):
+        if self.verbose:
+            prefix = {
+                "INFO": "ℹ️ ",
+                "WARN": "⚠️ ",
+                "ERROR": "❌",
+                "SUCCESS": "✅"
+            }.get(level, "")
+            print(f"{prefix} {message}")
+    
+    def read_pyc(self, pyc_path: Path) -> Tuple[bytes, bytes, bytes, types.CodeType]:
+        """
+        Returns: (magic, bit_field, timestamp, code_object)
+        """
+        try:
+            with open(pyc_path, 'rb') as f:
+                # Magic number (4 bytes)
+                magic = f.read(4)
+                if len(magic) != 4:
+                    raise ValueError("Invalid .pyc file: truncated magic number")
+                
+                # Validate magic number
+                if not self._validate_magic(magic):
+                    raise ValueError(f"Invalid magic number: {magic.hex()}")
+                
+                # Bit field (4 bytes) - Python 3.7+
+                bit_field = f.read(4)
+                if len(bit_field) != 4:
+                    raise ValueError("Invalid .pyc file: truncated bit field")
+                
+                # Timestamp/hash (4 bytes)
                 timestamp = f.read(4)
+                if len(timestamp) != 4:
+                    raise ValueError("Invalid .pyc file: truncated timestamp")
+                
+                # Size (4 bytes) - Python 3.3+
                 size = f.read(4)
-            else:
-                timestamp = f.read(4)
-                size = None
-            
-
-            code_obj = marshal.load(f)
-            
-            return magic, timestamp, size, code_obj
-    
-    def write_pyc(self, pyc_path: Path, magic: bytes, timestamp: bytes, 
-                  size: bytes, code_obj: types.CodeType):
-        with open(pyc_path, 'wb') as f:
-            f.write(magic)
-            
-            if self.py_version >= (3, 7):
-                f.write(b'\x00\x00\x00\x00')  # flags
-            
-            f.write(timestamp)
-            if size:
-                f.write(size)
-            
-            marshal.dump(code_obj, f)
-    
-    def _get_instruction_sizes(self, code: types.CodeType) -> Dict[int, int]:
-        instructions = list(dis.get_instructions(code))
-        sizes = {}
-        
-        for i, instr in enumerate(instructions):
-            if i < len(instructions) - 1:
-
-                size = instructions[i + 1].offset - instr.offset
-            else:
-
-                size = len(code.co_code) - instr.offset
-            
-            sizes[instr.offset] = size
-        
-        return sizes
-    
-    def inject_nops(self, code: types.CodeType, min_nops: int, max_nops: int) -> types.CodeType:
-        original = bytearray(code.co_code)
-        instructions = list(dis.get_instructions(code))
-        
-        if not instructions:
-            return code
-        
-
-        instr_sizes = self._get_instruction_sizes(code)
-        
-
-        new_code = bytearray()
-        old_to_new: Dict[int, int] = {}
-        nop_op = dis.opmap['NOP']
-        extended_arg_op = dis.opmap.get('EXTENDED_ARG', -1)
-        
-        for idx, instr in enumerate(instructions):
-            old_offset = instr.offset
-            new_offset = len(new_code)
-            old_to_new[old_offset] = new_offset
-            
-
-            instr_size = instr_sizes[old_offset]
-            new_code.extend(original[old_offset:old_offset + instr_size])
-            
-
-
-
-            if instr.opcode == extended_arg_op or idx == len(instructions) - 1:
-                continue
-            
-
-            nop_count = random.randint(min_nops, max_nops)
-            for _ in range(nop_count):
-                new_code.extend([nop_op, 0])
-        
-
-        patch_count = 0
-        jump_opcodes = set(dis.hasjrel) | set(dis.hasjabs)
-        for instr in instructions:
-            if instr.opcode not in jump_opcodes:
-                continue
-            
-            new_offset = old_to_new[instr.offset]
-            instr_size = instr_sizes[instr.offset]
-            
-
-            if instr.opcode in dis.hasjrel:
-
-                if instr.opname == 'JUMP_BACKWARD':
-
-                    old_target = (instr.offset + instr_size) - (instr.arg or 0) * 2
-                else:
-
-                    old_target = instr.offset + instr_size + (instr.arg or 0) * 2
+                if len(size) != 4:
+                    # Try to continue without size
+                    size = b'\x00\x00\x00\x00'
                 
-                if old_target in old_to_new:
-                    new_target = old_to_new[old_target]
-                    
-
-                    if instr.opname == 'JUMP_BACKWARD':
-
-                        new_distance = (new_offset + instr_size) - new_target
-                        new_arg = new_distance // 2
-                    else:
-
-                        new_distance = new_target - (new_offset + instr_size)
-                        new_arg = new_distance // 2
-                    
-
-                    if new_arg < 0 or new_arg > 255:
-                        new_arg = max(0, min(255, new_arg))
-                    
-
-                    new_code[new_offset + 1] = new_arg
-                    patch_count += 1
-                    
-
-            elif instr.opcode in dis.hasjabs:
-                old_target = (instr.arg or 0) * 2
+                # Code object
+                code_obj = marshal.load(f)
                 
-                if old_target in old_to_new:
-                    new_target = old_to_new[old_target]
-                    new_arg = new_target // 2
-                    
-                    if new_arg > 255:
-                        new_arg = new_arg & 0xFF
-                    
-                    new_code[new_offset + 1] = new_arg
-                    patch_count += 1
-        
-
-        new_code_obj = code.replace(co_code=bytes(new_code))
-        
-
-        new_consts = []
-        for const in new_code_obj.co_consts:
-            if isinstance(const, types.CodeType):
-                const = self.inject_nops(const, min_nops, max_nops)
-            new_consts.append(const)
-        
-        new_code_obj = new_code_obj.replace(co_consts=tuple(new_consts))
-        
-        return new_code_obj
-    
-    def add_nops_between_instructions(self, source: str, min_nops: int = 1,
-                                     max_nops: int = 21):
-        """
-        Args:
-            source: Path to .pyc file to modify (will be overwritten) or code object
-            min_nops: Minimum number of NOPs to inject after each instruction
-            max_nops: Maximum number of NOPs to inject after each instruction
-        
-        Note: Large max_nops values (>10) may cause jump distance overflows
-        """
-        if min_nops < 0 or max_nops < min_nops:
-            raise ValueError(f"Invalid NOP range: min={min_nops}, max={max_nops}")
-        
-        if max_nops > 15:
-            print(f"⚠ Warning: max_nops={max_nops} is high and may cause issues")
-        
-        if not isinstance(source, types.CodeType):
-            magic, bit_field, mtime_or_hash, code = self.read_pyc(source)
-        else:
-            code = source
-
-        new_code = self.inject_nops(code, min_nops, max_nops)
-        
-        if not isinstance(source, types.CodeType):
-            self.write_pyc(source, magic, bit_field, mtime_or_hash, new_code)
-        else:
-            return new_code
-        # return types.CodeType(
-        #     code_obj.co_argcount,
-        #     code_obj.co_posonlyargcount,
-        #     code_obj.co_kwonlyargcount,
-        #     code_obj.co_nlocals,
-        #     code_obj.co_stacksize,
-        #     code_obj.co_flags,
-        #     bytes(new_code),
-        #     code_obj.co_consts,
-        #     code_obj.co_names,
-        #     code_obj.co_varnames,
-        #     code_obj.co_filename,
-        #     code_obj.co_name,
-        #     code_obj.co_qualname if hasattr(code_obj, "co_qualname") else code_obj.co_name,
-        #     code_obj.co_firstlineno,
-        #     code_obj.co_linetable if hasattr(code_obj, "co_linetable") else code_obj.co_lnotab,
-        #     code_obj.co_exceptiontable if hasattr(code_obj, "co_exceptiontable") else b"",
-        #     code_obj.co_freevars,
-        #     code_obj.co_cellvars
-        # )
-    
-    def mangle_line_numbers(self, code_obj: types.CodeType) -> types.CodeType:
-        if sys.version_info >= (3, 10):
-
-            if hasattr(code_obj, 'co_linetable'):
-
-                mangled_linetable = bytes(
-                    (b + 13) % 256 for b in code_obj.co_linetable
-                )
+                if not isinstance(code_obj, types.CodeType):
+                    raise ValueError("Invalid .pyc file: code object is not CodeType")
                 
-                code_obj = code_obj.replace(co_linetable=mangled_linetable)
-        else:
-
-            if hasattr(code_obj, 'co_lnotab'):
-                mangled_lnotab = bytes(
-                    (b + 13) % 256 for b in code_obj.co_lnotab
-                )
+                self.log(f"Successfully read {pyc_path}", "SUCCESS")
+                return magic, bit_field, timestamp, code_obj
                 
-                code_obj = code_obj.replace(co_lnotab=mangled_lnotab)
-        
-        return code_obj
+        except Exception as e:
+            self.log(f"Failed to read {pyc_path}: {e}", "ERROR")
+            raise
     
-    def add_unreachable_code(self, bytecode: bytes) -> bytes:
-
-        if sys.version_info >= (3, 11):
-
-            unreachable = b'\x72\x14'
-            unreachable += b'\x64\x00' * 10
-            unreachable += b'\x53\x00'
-        else:
-
-            unreachable = b'\x6e\x0a'
-            unreachable += b'\x64\x00' * 5
-            unreachable += b'\x53'
-        
-
-        result = bytecode[:10] + unreachable + bytecode[10:]
-        return result
+    def write_pyc(self, pyc_path: Path, magic: bytes, bit_field: bytes,
+                  timestamp: bytes, code_obj: types.CodeType) -> None:
+        try:
+            # Pre-write validation
+            is_valid, message = self.verify_code_object(code_obj)
+            if not is_valid:
+                raise ValueError(f"Code object validation failed: {message}")
+            
+            # Write to temporary file first
+            temp_path = pyc_path.with_suffix('.pyc.tmp')
+            
+            with open(temp_path, 'wb') as f:
+                f.write(magic)
+                f.write(bit_field)
+                f.write(timestamp)
+                f.write(b'\x00\x00\x00\x00')  # Size (placeholder)
+                marshal.dump(code_obj, f)
+            
+            # Verify the written file can be read
+            try:
+                _, _, _, test_code = self.read_pyc(temp_path)
+                is_valid, message = self.verify_code_object(test_code)
+                if not is_valid:
+                    raise ValueError(f"Written file validation failed: {message}")
+            except Exception as e:
+                temp_path.unlink()
+                raise ValueError(f"Written file is invalid: {e}")
+            
+            # Atomic replace
+            temp_path.replace(pyc_path)
+            
+            self.log(f"Successfully wrote {pyc_path}", "SUCCESS")
+            
+        except Exception as e:
+            self.log(f"Failed to write {pyc_path}: {e}", "ERROR")
+            raise
     
-    def duplicate_constants(self, code_obj: types.CodeType) -> types.CodeType:
-        if hasattr(code_obj, 'co_consts'):
+    def _validate_magic(self, magic: bytes) -> bool:
+        if len(magic) != 4:
+            return False
+        
+        # Python 3.x magic numbers typically have patterns
+        # We won't be too strict, just check it's not zeros or garbage
+        if magic == b'\x00\x00\x00\x00':
+            return False
+        
+        return True
+    
+    # ========================================================================
+    # VALIDATION - COMPREHENSIVE
+    # ========================================================================
+    
+    def verify_code_object(self, code_obj: types.CodeType, 
+                          depth: int = 0) -> Tuple[bool, str]:
+        if depth > 10:
+            return False, "Code object nesting too deep"
+        
+        try:
+            # Check 1: Basic attributes exist
+            required_attrs = ['co_code', 'co_consts', 'co_names', 'co_varnames']
+            for attr in required_attrs:
+                if not hasattr(code_obj, attr):
+                    return False, f"Missing attribute: {attr}"
+            
+            # Check 2: Bytecode is not empty
+            if len(code_obj.co_code) == 0:
+                return False, "Empty bytecode"
+            
+            # Check 3: Bytecode length is even (2-byte instructions)
+            if len(code_obj.co_code) % 2 != 0:
+                return False, "Bytecode length is odd (should be even)"
+            
+            # Check 4: Can disassemble without errors
+            try:
+                list(dis.get_instructions(code_obj))
+            except Exception as e:
+                return False, f"Disassembly failed: {e}"
+            
+            # Check 5: All jump targets are valid instruction boundaries
+            jump_targets = self._get_all_jump_targets(code_obj)
+            valid_offsets = self._get_valid_instruction_offsets(code_obj)
+            
+            invalid_targets = jump_targets - valid_offsets
+            if invalid_targets:
+                return False, f"Invalid jump targets: {invalid_targets}"
+            
+            # Check 6: Validate nested code objects
+            for const in code_obj.co_consts:
+                if isinstance(const, types.CodeType):
+                    is_valid, message = self.verify_code_object(const, depth + 1)
+                    if not is_valid:
+                        return False, f"Nested code object invalid: {message}"
+            
+            return True, "OK"
+            
+        except Exception as e:
+            return False, f"Validation error: {e}"
+    
+    def _get_all_jump_targets(self, code_obj: types.CodeType) -> Set[int]:
+        targets = set()
+        
+        for instr in dis.get_instructions(code_obj):
+            if instr.opcode in self.jump_opcodes:
+                if isinstance(instr.argval, int):
+                    targets.add(instr.argval)
+        
+        return targets
+    
+    def _get_valid_instruction_offsets(self, code_obj: types.CodeType) -> Set[int]:
+        return {instr.offset for instr in dis.get_instructions(code_obj)}
+    
+    # ========================================================================
+    # SAFE CONSTANT POLLUTION
+    # ========================================================================
+    
+    def add_constant_pollution(self, code_obj: types.CodeType, 
+                               count: int = 50) -> types.CodeType:
+        try:
             original_consts = list(code_obj.co_consts)
             
-
-            duplicates = []
-            for const in original_consts[:min(len(original_consts), 50)]:
-                if isinstance(const, (int, float, str)):
-                    duplicates.append(const)
+            # Generate diverse fake constants
+            fake_consts = []
+            for i in range(count):
+                const_type = random.choice([
+                    'int', 'float', 'str', 'bytes', 
+                    'bool', 'none', 'tuple', 'frozenset'
+                ])
+                
+                if const_type == 'int':
+                    fake_consts.append(random.randint(-999999, 999999))
+                elif const_type == 'float':
+                    fake_consts.append(random.uniform(-1000.0, 1000.0))
+                elif const_type == 'str':
+                    fake_consts.append(secrets.token_hex(random.randint(4, 20)))
+                elif const_type == 'bytes':
+                    fake_consts.append(secrets.token_bytes(random.randint(4, 20)))
+                elif const_type == 'bool':
+                    fake_consts.append(random.choice([True, False]))
+                elif const_type == 'none':
+                    fake_consts.append(None)
+                elif const_type == 'tuple':
+                    fake_consts.append(tuple(random.randint(0, 100) for _ in range(random.randint(0, 5))))
+                elif const_type == 'frozenset':
+                    fake_consts.append(frozenset(random.randint(0, 100) for _ in range(random.randint(0, 3))))
             
-            new_consts = tuple(original_consts + duplicates)
-            code_obj = code_obj.replace(co_consts=new_consts)
-        
-        return code_obj
+            # Shuffle to avoid patterns
+            random.shuffle(fake_consts)
+            
+            # Combine
+            new_consts = tuple(original_consts + fake_consts)
+            
+            # Update stats
+            self.stats['constants_added'] += len(fake_consts)
+            
+            result = code_obj.replace(co_consts=new_consts)
+            
+            self.log(f"Added {len(fake_consts)} fake constants", "INFO")
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"Constant pollution failed: {e}", "WARN")
+            return code_obj  # Return unchanged on error
     
-    def transform_bytecode(self, pyc_path: Path, intensity: str = "high"):
+    # ========================================================================
+    # SAFE LINE NUMBER OBFUSCATION
+    # ========================================================================
+    
+    def obfuscate_line_numbers(self, code_obj: types.CodeType) -> types.CodeType:
+        try:
+            # Obfuscate firstlineno
+            offset = random.randint(100, 5000)
+            new_firstlineno = code_obj.co_firstlineno + offset
+            
+            result = code_obj.replace(co_firstlineno=new_firstlineno)
+            
+            # Python 3.10+ uses co_linetable
+            if PY310_PLUS and hasattr(result, 'co_linetable'):
+                original = result.co_linetable
+                if len(original) > 0:
+                    # Apply transformation to line table
+                    # This is a delta encoding, so we modify deltas
+                    scrambled = bytearray(original)
+                    for i in range(len(scrambled)):
+                        if i % 2 == 0:  # Line deltas
+                            scrambled[i] = (scrambled[i] + random.randint(1, 10)) % 256
+                    result = result.replace(co_linetable=bytes(scrambled))
+            
+            # Python 3.6-3.9 uses co_lnotab
+            elif hasattr(result, 'co_lnotab'):
+                original = result.co_lnotab
+                if len(original) > 0:
+                    scrambled = bytearray(original)
+                    for i in range(len(scrambled)):
+                        if i % 2 == 1:  # Line increments
+                            scrambled[i] = (scrambled[i] + random.randint(1, 10)) % 256
+                    result = result.replace(co_lnotab=bytes(scrambled))
+            
+            self.log("Obfuscated line numbers", "INFO")
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"Line obfuscation failed: {e}", "WARN")
+            return code_obj
+    
+    # ========================================================================
+    # SAFE NOP INJECTION - WITH COMPREHENSIVE EDGE CASE HANDLING
+    # ========================================================================
+    
+    def inject_nops_ultra_safe(self, code_obj: types.CodeType,
+                               min_nops: int = 1, max_nops: int = 3) -> types.CodeType:
+        # Validate parameters
+        if min_nops < 0 or max_nops < min_nops or max_nops > 5:
+            self.log(f"Invalid NOP range: [{min_nops}, {max_nops}], skipping", "WARN")
+            return code_obj
+        
+        try:
+            # Parse instructions
+            instructions = list(dis.get_instructions(code_obj))
+            
+            if len(instructions) == 0:
+                self.log("Empty bytecode, skipping NOP injection", "INFO")
+                return code_obj
+            
+            # Check if code is too complex
+            if len(instructions) > 500:
+                self.log(f"Code too large ({len(instructions)} instructions), skipping NOP injection", "WARN")
+                return code_obj
+            
+            # Build instruction info with jump targets
+            jump_targets = self._get_all_jump_targets(code_obj)
+            
+            instr_info = []
+            for instr in instructions:
+                info = InstructionInfo(
+                    offset=instr.offset,
+                    opcode=instr.opcode,
+                    opname=instr.opname,
+                    arg=instr.arg,
+                    argval=instr.argval,
+                    is_jump_target=(instr.offset in jump_targets),
+                    size=2  # All instructions are 2 bytes in modern Python
+                )
+                instr_info.append(info)
+            
+            # Build new bytecode with NOPs
+            old_code = bytearray(code_obj.co_code)
+            new_code = bytearray()
+            offset_map: Dict[int, int] = {}
+            
+            for idx, info in enumerate(instr_info):
+                old_offset = info.offset
+                new_offset = len(new_code)
+                offset_map[old_offset] = new_offset
+                
+                # Copy original instruction (2 bytes)
+                new_code.extend(old_code[old_offset:old_offset + 2])
+                
+                # Decide whether to add NOPs
+                should_add_nops = (
+                    idx < len(instr_info) - 1 and  # Not last instruction
+                    info.opcode != self.extended_arg_opcode and  # Not EXTENDED_ARG
+                    info.opcode != self.return_value_opcode  # Not RETURN (risky)
+                )
+                
+                if should_add_nops:
+                    nop_count = random.randint(min_nops, max_nops)
+                    for _ in range(nop_count):
+                        new_code.extend([self.nop_opcode, 0])
+            
+            # Recalculate jump offsets with safety checks
+            new_code = self._patch_jumps_safe(
+                new_code, instr_info, offset_map
+            )
+            
+            # Create new code object
+            result = code_obj.replace(co_code=bytes(new_code))
+            
+            # CRITICAL: Validate before returning
+            is_valid, message = self.verify_code_object(result)
+            
+            if not is_valid:
+                self.log(f"NOP injection produced invalid code: {message}", "WARN")
+                return code_obj  # Return original
+            
+            # Update stats
+            old_size = len(code_obj.co_code)
+            new_size = len(new_code)
+            self.stats['bytes_added'] += (new_size - old_size)
+            
+            self.log(f"NOP injection: {old_size} → {new_size} bytes", "SUCCESS")
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"NOP injection failed: {e}", "WARN")
+            return code_obj  # Always return original on error
+    
+    def _patch_jumps_safe(self, bytecode: bytearray,
+                         instructions: List[InstructionInfo],
+                         offset_map: Dict[int, int]) -> bytearray:
+        for info in instructions:
+            # Skip non-jumps
+            if info.opcode not in self.jump_opcodes:
+                continue
+            
+            # Skip if no target
+            if not isinstance(info.argval, int):
+                continue
+            
+            old_target = info.argval
+            
+            # Check target is mapped
+            if old_target not in offset_map:
+                self.log(f"Jump target {old_target} not in offset map, skipping", "WARN")
+                continue
+            
+            new_offset = offset_map[info.offset]
+            new_target = offset_map[old_target]
+            
+            # Calculate new jump argument
+            try:
+                new_arg = self._calculate_jump_arg_safe(
+                    info, new_offset, new_target
+                )
+                
+                # Clamp to valid range
+                if new_arg < 0:
+                    self.log(f"Negative jump arg {new_arg}, clamping to 0", "WARN")
+                    new_arg = 0
+                elif new_arg > 255:
+                    self.log(f"Jump arg {new_arg} > 255, clamping", "WARN")
+                    new_arg = 255
+                
+                # Patch the argument byte
+                bytecode[new_offset + 1] = new_arg
+                
+            except Exception as e:
+                self.log(f"Failed to patch jump at {info.offset}: {e}", "WARN")
+                continue
+        
+        return bytecode
+    
+    def _calculate_jump_arg_safe(self, info: InstructionInfo,
+                                 new_offset: int, new_target: int) -> int:
+        # Absolute jumps
+        if info.opcode in self.abs_jump_opcodes:
+            # Python 3.10+ uses byte offsets directly
+            if PY310_PLUS:
+                return new_target // 2
+            else:
+                return new_target // 2
+        
+        # Relative jumps
+        elif info.opcode in self.rel_jump_opcodes:
+            instr_size = info.size  # 2 bytes
+            
+            # Python 3.11+ has JUMP_BACKWARD
+            if PY311_PLUS and info.opname == 'JUMP_BACKWARD':
+                # Backward jump: distance from end of instruction to target
+                distance = (new_offset + instr_size) - new_target
+                return distance // 2
+            else:
+                # Forward jump: distance from end of instruction to target
+                distance = new_target - (new_offset + instr_size)
+                return distance // 2
+        
+        return 0
+    
+    # ========================================================================
+    # RECURSIVE TRANSFORMATION
+    # ========================================================================
+    
+    def transform_recursive(self, code_obj: types.CodeType,
+                          transform_func) -> types.CodeType:
+        try:
+            # Transform this level
+            result = transform_func(code_obj)
+            
+            # Transform nested code objects in constants
+            new_consts = []
+            for const in result.co_consts:
+                if isinstance(const, types.CodeType):
+                    try:
+                        const = self.transform_recursive(const, transform_func)
+                    except Exception as e:
+                        self.log(f"Failed to transform nested code: {e}", "WARN")
+                        # Keep original nested code on error
+                new_consts.append(const)
+            
+            result = result.replace(co_consts=tuple(new_consts))
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"Recursive transformation failed: {e}", "WARN")
+            return code_obj
+    
+    # ========================================================================
+    # HIGH-LEVEL API
+    # ========================================================================
+    
+    def transform_file(self, pyc_path: Path,
+                      intensity: TransformIntensity = TransformIntensity.EXTREME,
+                      min_nops: int = 1, max_nops: int = 3,
+                      backup: bool = True) -> bool:
         """
         Args:
             pyc_path: Path to .pyc file
-            intensity: "low", "medium", "high", "vodka"
+            intensity: Transformation intensity level
+            min_nops: Minimum NOPs (for AGGRESSIVE+)
+            max_nops: Maximum NOPs (for AGGRESSIVE+)
+            backup: Create backup before transformation
+        
+        Returns:
+            True if successful, False otherwise
         """
-
-        magic, timestamp, size, code_obj = self.read_pyc(pyc_path)
         
-
-        if intensity in ["medium", "high", "vodka"]:
-            code_obj = self.mangle_line_numbers(code_obj)
+        self.log(f"Transforming {pyc_path} with intensity={intensity.name}", "INFO")
         
-        if intensity in ["high", "vodka"]:
-            code_obj = self.duplicate_constants(code_obj)
-        
-        if intensity == "vodka":
-
-            code_obj = self._transform_nested(code_obj)
-        
-
-        self.write_pyc(pyc_path, magic, timestamp, size, code_obj)
-    
-    def _transform_nested(self, code_obj: types.CodeType) -> types.CodeType:
-        if hasattr(code_obj, 'co_consts'):
-            new_consts = []
-            for const in code_obj.co_consts:
-                if isinstance(const, types.CodeType):
-
-                    const = self.mangle_line_numbers(const)
-                    const = self.duplicate_constants(const)
-                    const = self._transform_nested(const)
-                new_consts.append(const)
+        try:
+            # Create backup
+            if backup:
+                backup_path = pyc_path.with_suffix('.pyc.bak')
+                backup_path.write_bytes(pyc_path.read_bytes())
+                self.log(f"Created backup: {backup_path}", "INFO")
             
-            code_obj = code_obj.replace(co_consts=tuple(new_consts))
-        
-        return code_obj
-
-
+            # Read original
+            magic, bit_field, timestamp, code_obj = self.read_pyc(pyc_path)
+            
+            # Validate original
+            is_valid, message = self.verify_code_object(code_obj)
+            if not is_valid:
+                self.log(f"Original file invalid: {message}", "ERROR")
+                return False
+            
+            original_size = len(code_obj.co_code)
+            
+            # Apply transformations based on intensity
+            if intensity >= TransformIntensity.LIGHT:
+                # Always safe - just constants
+                code_obj = self.transform_recursive(
+                    code_obj,
+                    lambda c: self.add_constant_pollution(c, count=30)
+                )
+            
+            if intensity >= TransformIntensity.MODERATE:
+                # Safe - line number obfuscation
+                code_obj = self.transform_recursive(
+                    code_obj,
+                    self.obfuscate_line_numbers
+                )
+            
+            if intensity >= TransformIntensity.AGGRESSIVE:
+                # Potentially risky - NOP injection
+                code_obj = self.transform_recursive(
+                    code_obj,
+                    lambda c: self.inject_nops_ultra_safe(c, min_nops, max_nops)
+                )
+            
+            if intensity >= TransformIntensity.EXTREME:
+                # Extra aggressive
+                code_obj = self.transform_recursive(
+                    code_obj,
+                    lambda c: self.add_constant_pollution(c, count=50)
+                )
+            
+            # Validate transformed
+            is_valid, message = self.verify_code_object(code_obj)
+            if not is_valid:
+                self.log(f"Transformed code invalid: {message}", "ERROR")
+                if backup:
+                    self.log("Restoring from backup...", "INFO")
+                    pyc_path.write_bytes(backup_path.read_bytes())
+                return False
+            
+            # Write transformed
+            self.write_pyc(pyc_path, magic, bit_field, timestamp, code_obj)
+            
+            # Report stats
+            new_size = len(code_obj.co_code)
+            growth = ((new_size - original_size) / original_size) * 100 if original_size > 0 else 0
+            
+            self.log(f"Success! Size: {original_size} → {new_size} (+{growth:.1f}%)", "SUCCESS")
+            
+            self.stats['files_processed'] += 1
+            self.stats['files_succeeded'] += 1
+            
+            return True
+            
+        except Exception as e:
+            self.log(f"Transformation failed: {e}", "ERROR")
+            self.stats['files_processed'] += 1
+            self.stats['files_failed'] += 1
+            return False
+    
+    def get_statistics(self) -> Dict:
+        return self.stats.copy()
 class BreakerAST:
-    def __init__(self, workspace_dir: str = "workspace"):
+    def __init__(self, workspace_dir: str = "workspace", version: Optional[Tuple[int, int]] = None):
         self.workspace = Path(workspace_dir)
         self.workspace.mkdir(exist_ok=True)
         self.breaker = MainBreaker()
-        self.bytecode_transformer = BytecodeTransformer()
+        self.bytecode_transformer = BytecodeTransformer(version=version if version else PY_VERSION)
     
     def gen_break_ast(self, preset: str = "balanced", debug: bool = False) -> ast.Module:
         body = []
@@ -1333,9 +1633,7 @@ class BreakerAST:
                 if debug:
                     print(f"[DEBUG] Transforming bytecode: {intensity}")
                 
-                self.bytecode_transformer.transform_bytecode(output_file, intensity)
-
-                # self.bytecode_transformer.add_nops_between_instructions(output_file, min_nops=5, max_nops=10) # isnt working. Crashes upon run attempts.
+                self.bytecode_transformer.transform_file(output_file, TransformIntensity.EXTREME if intensity == "vodka" else TransformIntensity.AGGRESSIVE if intensity == "high" else TransformIntensity.MODERATE,min_nops=8, max_nops=10)
 
                 if debug:
                     print(f"[DEBUG] Bytecode transformed")
@@ -1389,7 +1687,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Dual-Attack PyLingual Breaker - LOAD_GLOBAL error + Control flow timeout + OOM + VODKA MODE 🍸',
+        description='vodka',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Attack Strategy:
@@ -1452,4 +1750,5 @@ Presets:
 
 
 if __name__ == '__main__':
+    __name__+='vodka'
     main()

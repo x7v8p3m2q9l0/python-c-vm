@@ -1,176 +1,480 @@
 from .utils import RandomGenerator
-from typing import List, Set
+from typing import List, Set, Dict, Optional, Tuple
 import secrets
-class OpaquePredicateGenerator:
+import re
+import hashlib
+
+class OpaquePredicateGenerator:    
     @staticmethod
     def always_true() -> str:
+        """Generate mathematically always-true predicate"""
         c = RandomGenerator.random_int(1, 100)
         templates = [
-            f"(({c} & 1) == 0 || ({c} & 1) == 1)",  # Tautology: even or odd
-            f"(({c} * {c}) >= 0)",  # Always true: square is non-negative
-            f"(({c} | 0) == {c})",  # Identity operation
-            f"(({c} ^ 0) == {c})",  # XOR with zero
-            f"((1) == (1))",  # Trivial but obscured by surrounding code
-            f"(({c} + 0) == {c})",  # Addition identity
+            # Mathematical invariants
+            f"(({c} * {c}) >= 0)",  # Square is always non-negative
+            f"(({c} & 1) == 0 || ({c} & 1) == 1)",  # Bit is 0 or 1
+            
+            # Identity operations
+            f"(({c} | 0) == {c})",
+            f"(({c} ^ 0) == {c})",
+            f"(({c} + 0) == {c})",
+            f"(({c} - 0) == {c})",
+            
+            # Tautologies
+            f"(({c} == {c}))",
+            f"(({c} >= {c}))",
+            f"(({c} <= {c}))",
+            
+            # Bitwise tautologies
+            f"((~{c} | {c}) == -1)",  # Complement OR original = all bits set
+            f"((~{c} ^ -1) == {c})",  # Double complement
+            
+            # Complex expressions
+            f"((({c} + 1) > {c}) || {c} == 9223372036854775807LL)",  # Handle overflow
+            f"(({c} ^ {c}) == 0)",  # XOR with self
         ]
         return secrets.choice(templates)
     
     @staticmethod
     def always_false() -> str:
-        """Generate always-false predicate"""
+        """Generate mathematically always-false predicate"""
         c = RandomGenerator.random_int(1, 100)
         templates = [
-            f"(({c} & (~{c})) != 0)",  # AND with complement != 0
-            f"(({c} ^ {c}) != 0)",   # XOR with self != 0
-            f"(({c} * 0) != 0)",   # Multiply by zero != 0
-            f"(({c} < {c}))",        # Self comparison
-            f"((0) != (0))",  # Trivial contradiction
-            f"(({c} - {c}) != 0)",  # Subtract self != 0
+            # Contradictions
+            f"(({c} != {c}))",
+            f"(({c} < {c}))",
+            f"(({c} > {c}))",
+            
+            # Bitwise contradictions
+            f"(({c} & (~{c})) != 0)",  # AND with complement
+            f"(({c} ^ {c}) != 0)",  # XOR with self
+            
+            # Arithmetic impossibilities
+            f"(({c} * 0) != 0)",
+            f"(({c} - {c}) != 0)",
+            
+            # Complex contradictions
+            f"((({c} & 1) == 0) && (({c} & 1) == 1))",  # Can't be both
+            f"((0) != (0))",
+            f"((1) == (0))",
+        ]
+        return secrets.choice(templates)
+    
+    @staticmethod
+    def contextual_true(var_name: str) -> str:
+        """Generate always-true predicate using a variable"""
+        templates = [
+            f"(({var_name} * {var_name}) >= 0)",
+            f"(({var_name} == {var_name}))",
+            f"(({var_name} ^ 0) == {var_name})",
+            f"((({var_name} & 1) == 0) || (({var_name} & 1) == 1))",
         ]
         return secrets.choice(templates)
     
     @staticmethod
     def random_condition() -> str:
         """Generate random opaque condition"""
-        return OpaquePredicateGenerator.always_true() if secrets.randbelow(2) else OpaquePredicateGenerator.always_false()
+        return (OpaquePredicateGenerator.always_true() 
+                if secrets.randbelow(2) 
+                else OpaquePredicateGenerator.always_false())
 
-class ControlFlowFlattener:
-    """Implements control-flow flattening (state machine transformation)"""
+
+class Statement:
+    """Represents a single statement or block of code"""
     
-    def __init__(self):
-        self.state_counter = 0
-        self.var_declarations = set()
+    def __init__(self, code: str, stmt_type: str = "normal"):
+        self.code = code.strip()
+        self.stmt_type = stmt_type  # normal, return, break, continue, conditional
+        self.has_control_flow = self._detect_control_flow()
+        self.declares_vars = self._extract_declarations()
+        self.uses_vars = self._extract_variable_usage()
     
-    def flatten(self, stmts: List[str], indent_level: int = 1) -> str:
-        """Convert sequential statements to state machine"""
-        if len(stmts) < 2:  # Need at least 2 statements
-            return "\n".join(stmts)
-        
-        # Don't flatten if there are conditional returns or complex nested structures
-        if self._has_complex_control_flow(stmts):
-            return "\n".join(stmts)
-        
-        ind = "    " * indent_level
-        
-        # First pass: extract all variable declarations
-        self.var_declarations = self._extract_variable_declarations(stmts)
-        
-        # Second pass: process statements without declarations
-        processed_stmts = self._remove_declarations_from_stmts(stmts)
-        
-        # Assign random state IDs
-        num_states = len(processed_stmts)
-        states = list(range(num_states))
-        secrets.SystemRandom().shuffle(states)
-        
-        # Generate state variable
-        state_var = f"_s{self.state_counter}"
-        self.state_counter += 1
-        
-        # Build the flattened code
-        result = []
-        
-        # Add all variable declarations at function scope
-        for var_decl in sorted(self.var_declarations):
-            result.append(f"{ind}{var_decl};")
-        
-        # Add state machine
-        result.append(f"{ind}int64 {state_var} = {states[0]};")
-        result.append(f"{ind}while ({OpaquePredicateGenerator.always_true()}) {{")
-        result.append(f"{ind}    switch ({state_var}) {{")
-        
-        # Add each statement as a case
-        for i, (stmt, state_id) in enumerate(zip(processed_stmts, states)):
-            result.append(f"{ind}    case {state_id}:")
-            
-            # Add statement lines
-            for line in stmt.split('\n'):
-                if line.strip():
-                    result.append(f"{ind}        {line}")
-            
-            # Add occasional fake branches
-            if i > 0 and secrets.randbelow(4) == 0:  # 25% chance after first state
-                fake_state = RandomGenerator.random_int(1000, 9999)
-                result.append(f"{ind}        if ({OpaquePredicateGenerator.always_false()}) {{")
-                result.append(f"{ind}            {state_var} = {fake_state};")
-                result.append(f"{ind}            break;")
-                result.append(f"{ind}        }}")
-            
-            # State transition
-            if i < num_states - 1:
-                result.append(f"{ind}        {state_var} = {states[i + 1]};")
-                result.append(f"{ind}        break;")
-            else:
-                # Last state - exit
-                result.append(f"{ind}        goto _exit_{state_var};")
-        
-        # Add a few fake dead states
-        for _ in range(RandomGenerator.random_int(1, 3)):
-            fake_state = RandomGenerator.random_int(1000, 9999)
-            result.append(f"{ind}    case {fake_state}:")
-            result.append(f"{ind}        {state_var} = {states[0]};")
-            result.append(f"{ind}        break;")
-        
-        result.append(f"{ind}    default:")
-        result.append(f"{ind}        goto _exit_{state_var};")
-        result.append(f"{ind}    }}")
-        result.append(f"{ind}}}")
-        result.append(f"{ind}_exit_{state_var}:;")
-        
-        return "\n".join(result)
+    def _detect_control_flow(self) -> bool:
+        """Detect if statement contains control flow"""
+        keywords = ['return', 'break', 'continue', 'goto']
+        return any(keyword in self.code for keyword in keywords)
     
-    def _has_complex_control_flow(self, stmts: List[str]) -> bool:
-        """Check if statements have complex control flow that shouldn't be flattened"""
-        for i, stmt in enumerate(stmts):
-            # Don't flatten if there's a return that's not the last statement
-            if 'return' in stmt and i < len(stmts) - 1:
-                return True
-            # Don't flatten if there are nested if statements
-            if stmt.count('if (') > 1:
-                return True
-            # Don't flatten if there are nested while loops
-            if stmt.count('while (') > 1:
-                return True
-        return False
-    
-    def _extract_variable_declarations(self, stmts: List[str]) -> Set[str]:
-        """Extract all variable declarations from statements"""
+    def _extract_declarations(self) -> Set[str]:
+        """Extract variable declarations"""
         declarations = set()
-        
-        for stmt in stmts:
-            lines = stmt.split('\n')
-            for line in lines:
-                # Match pattern: int64 variable_name = ...
-                if 'int64 ' in line and '=' in line and 'return' not in line:
-                    # Extract just the declaration part
-                    parts = line.split('=', 1)
-                    decl_part = parts[0].strip()
-                    # Clean up the declaration
-                    if 'int64 ' in decl_part:
-                        var_name = decl_part.replace('int64', '').strip()
-                        declarations.add(f"int64 {var_name}")
-        
+        # Match: type varname = ...
+        # Patterns: int64 x = ..., int32 y = ..., etc.
+        pattern = r'\b(int64|int32|int16|int8|uint64|uint32|uint16|uint8|double|float)\s+(\w+)\s*='
+        matches = re.findall(pattern, self.code)
+        for type_name, var_name in matches:
+            declarations.add((type_name, var_name))
         return declarations
     
-    def _remove_declarations_from_stmts(self, stmts: List[str]) -> List[str]:
-        """Remove 'int64' declarations from statements, keeping only assignments"""
-        processed = []
+    def _extract_variable_usage(self) -> Set[str]:
+        """Extract variables used (read from) in statement"""
+        # This is simplified - proper implementation would use AST parsing
+        # For now, extract potential variable names
+        words = re.findall(r'\b[a-zA-Z_]\w*\b', self.code)
+        # Filter out keywords and type names
+        keywords = {
+            'if', 'else', 'while', 'for', 'return', 'break', 'continue',
+            'int64', 'int32', 'int16', 'int8', 'uint64', 'uint32', 'uint16', 'uint8',
+            'double', 'float', 'void', 'const', 'static', 'goto', 'switch', 'case'
+        }
+        return set(w for w in words if w not in keywords)
+    
+    def remove_type_from_declaration(self) -> str:
+        """Convert 'int64 x = 5' to 'x = 5'"""
+        pattern = r'\b(int64|int32|int16|int8|uint64|uint32|uint16|uint8|double|float)\s+(\w+)\s*='
+        return re.sub(pattern, r'\2 =', self.code)
+    
+    def __repr__(self):
+        return f"Statement({self.stmt_type}, {len(self.code)} chars)"
+
+
+class ControlFlowAnalyzer:
+    """Analyzes control flow to determine if flattening is safe"""
+    
+    def __init__(self, statements: List[Statement]):
+        self.statements = statements
+    
+    def can_flatten(self) -> Tuple[bool, str]:
+        """
+        Determine if statements can be safely flattened
+        Returns: (can_flatten, reason)
+        """
         
-        for stmt in stmts:
-            lines = stmt.split('\n')
-            new_lines = []
+        # Check 1: Too few statements
+        if len(self.statements) < 2:
+            return False, "Too few statements (need at least 2)"
+        
+        # Check 2: Early returns (except last statement)
+        for i, stmt in enumerate(self.statements[:-1]):
+            if 'return' in stmt.code:
+                return False, f"Early return at statement {i}"
+        
+        # Check 3: Break/continue (these require loop context)
+        for i, stmt in enumerate(self.statements):
+            if 'break' in stmt.code or 'continue' in stmt.code:
+                return False, f"Break/continue at statement {i}"
+        
+        # Check 4: Complex nested control flow
+        for i, stmt in enumerate(self.statements):
+            # Count braces to detect nesting depth
+            open_braces = stmt.code.count('{')
+            close_braces = stmt.code.count('}')
+            if open_braces > 2 or close_braces > 2:
+                return False, f"Complex nesting at statement {i}"
+        
+        # Check 5: Goto statements
+        for i, stmt in enumerate(self.statements):
+            if 'goto' in stmt.code:
+                return False, f"Goto at statement {i}"
+        
+        # Check 6: Multiple control flow paths in one statement
+        for i, stmt in enumerate(self.statements):
+            if stmt.code.count('if (') > 1:
+                return False, f"Multiple conditionals at statement {i}"
+        
+        return True, "Safe to flatten"
+    
+    def extract_all_declarations(self) -> Dict[str, str]:
+        """Extract all variable declarations"""
+        declarations = {}
+        for stmt in self.statements:
+            for type_name, var_name in stmt.declares_vars:
+                declarations[var_name] = type_name
+        return declarations
+
+
+class ControlFlowFlattener:
+    """
+    Enhanced control-flow flattening (state machine transformation)
+    
+    Converts sequential code into a state machine to obscure control flow.
+    Example:
+        x = 1;
+        y = x + 2;
+        return y;
+    
+    Becomes:
+        int64 x;
+        int64 y;
+        int64 _state = 42;
+        while (1) {
+            switch (_state) {
+                case 42:
+                    x = 1;
+                    _state = 17;
+                    break;
+                case 17:
+                    y = x + 2;
+                    _state = 93;
+                    break;
+                case 93:
+                    return y;
+                default:
+                    goto _exit;
+            }
+        }
+        _exit:;
+    """
+    
+    def __init__(self, seed: Optional[bytes] = None):
+        self.state_counter = 0
+        self.seed = seed or secrets.token_bytes(16)
+    
+    def flatten(self, stmts: List[str], indent_level: int = 1) -> str:
+        """
+        Convert sequential statements to state machine
+        
+        Args:
+            stmts: List of statement strings
+            indent_level: Current indentation level
+        
+        Returns:
+            Flattened code as string
+        """
+        if len(stmts) < 2:
+            return "\n".join(stmts)
+        
+        # Parse statements
+        statements = [Statement(s) for s in stmts]
+        
+        # Analyze control flow
+        analyzer = ControlFlowAnalyzer(statements)
+        can_flatten, reason = analyzer.can_flatten()
+        
+        if not can_flatten:
+            # Cannot safely flatten - return original
+            return "\n".join(stmts)
+        
+        # Extract all variable declarations
+        all_declarations = analyzer.extract_all_declarations()
+        
+        # Generate state IDs (deterministic but random-looking)
+        state_ids = self._generate_state_ids(len(statements))
+        
+        # Build flattened code
+        return self._build_state_machine(
+            statements, 
+            state_ids, 
+            all_declarations, 
+            indent_level
+        )
+    
+    def _generate_state_ids(self, count: int) -> List[int]:
+        """Generate random-looking state IDs"""
+        # Use hash-based generation for determinism with seed
+        state_ids = []
+        for i in range(count):
+            hash_input = self.seed + i.to_bytes(4, 'little')
+            hash_val = int(hashlib.sha256(hash_input).hexdigest()[:8], 16)
+            # Keep in reasonable range
+            state_id = (hash_val % 9000) + 1000  # Range: 1000-9999
+            state_ids.append(state_id)
+        
+        # Ensure uniqueness
+        while len(set(state_ids)) != len(state_ids):
+            # Regenerate if collision
+            for i in range(len(state_ids)):
+                if state_ids.count(state_ids[i]) > 1:
+                    state_ids[i] = RandomGenerator.random_int(1000, 9999)
+        
+        return state_ids
+    
+    def _build_state_machine(
+        self, 
+        statements: List[Statement],
+        state_ids: List[int],
+        declarations: Dict[str, str],
+        indent_level: int
+    ) -> str:
+        """Build the state machine code"""
+        ind = "    " * indent_level
+        lines = []
+        
+        # Generate unique state variable name
+        state_var = f"_state_{self.state_counter}"
+        exit_label = f"_exit_{self.state_counter}"
+        self.state_counter += 1
+        
+        # 1. Emit all variable declarations at function scope
+        for var_name, type_name in sorted(declarations.items()):
+            lines.append(f"{ind}{type_name} {var_name};")
+        
+        # 2. Initialize state variable
+        lines.append(f"{ind}int64 {state_var} = {state_ids[0]};")
+        
+        # 3. Add infinite loop with always-true predicate
+        loop_condition = OpaquePredicateGenerator.always_true()
+        lines.append(f"{ind}while ({loop_condition}) {{")
+        
+        # 4. Add switch statement
+        lines.append(f"{ind}    switch ({state_var}) {{")
+        
+        # 5. Generate case for each statement
+        for i, (stmt, state_id) in enumerate(zip(statements, state_ids)):
+            lines.append(f"{ind}    case {state_id}:")
             
-            for line in lines:
-                if 'int64 ' in line and '=' in line and 'return' not in line:
-                    # Remove 'int64' keyword, keep assignment
-                    parts = line.split('=', 1)
-                    var_name = parts[0].replace('int64', '').strip()
-                    indent_match = len(line) - len(line.lstrip())
-                    new_line = ' ' * indent_match + var_name + ' =' + parts[1]
-                    new_lines.append(new_line)
+            # Remove type declarations from statement
+            stmt_code = stmt.remove_type_from_declaration()
+            
+            # Add statement lines
+            for line in stmt_code.split('\n'):
+                if line.strip():
+                    lines.append(f"{ind}        {line.strip()}")
+            
+            # Add occasional fake branches (opaque predicates)
+            if i > 0 and secrets.randbelow(3) == 0:  # 33% chance
+                fake_state = RandomGenerator.random_int(10000, 99999)
+                fake_condition = OpaquePredicateGenerator.always_false()
+                lines.append(f"{ind}        if ({fake_condition}) {{")
+                lines.append(f"{ind}            {state_var} = {fake_state};")
+                lines.append(f"{ind}            break;")
+                lines.append(f"{ind}        }}")
+            
+            # State transition
+            if i < len(statements) - 1:
+                # Next state
+                lines.append(f"{ind}        {state_var} = {state_ids[i + 1]};")
+                lines.append(f"{ind}        break;")
+            else:
+                # Last state - check if it's a return
+                if 'return' in stmt.code:
+                    # Let the return execute naturally
+                    pass
                 else:
-                    new_lines.append(line)
-            
-            processed.append('\n'.join(new_lines))
+                    # Exit the state machine
+                    lines.append(f"{ind}        goto {exit_label};")
         
-        return processed
+        # 6. Add fake dead states to confuse analysis
+        num_fake_states = RandomGenerator.random_int(2, 5)
+        fake_state_ids = [
+            RandomGenerator.random_int(10000, 99999) 
+            for _ in range(num_fake_states)
+        ]
+        
+        for fake_id in fake_state_ids:
+            lines.append(f"{ind}    case {fake_id}:")
+            # Random fake operations
+            fake_ops = [
+                f"{state_var} = {state_var} ^ 0",
+                f"{state_var} = {state_ids[0]}",  # Loop back
+                f"/* unreachable */",
+            ]
+            lines.append(f"{ind}        {secrets.choice(fake_ops)};")
+            lines.append(f"{ind}        break;")
+        
+        # 7. Default case
+        lines.append(f"{ind}    default:")
+        lines.append(f"{ind}        goto {exit_label};")
+        
+        # 8. Close switch and while
+        lines.append(f"{ind}    }}")
+        lines.append(f"{ind}}}")
+        
+        # 9. Exit label
+        lines.append(f"{ind}{exit_label}:;")
+        
+        return "\n".join(lines)
+
+
+class AdvancedControlFlowFlattener(ControlFlowFlattener):
+    """
+    Advanced version with additional features:
+    - Variable dependency analysis
+    - Instruction reordering
+    - Context-sensitive opaque predicates
+    """
+    
+    def __init__(self, seed: Optional[bytes] = None, 
+                 enable_reordering: bool = True,
+                 enable_bogus_states: bool = True):
+        super().__init__(seed)
+        self.enable_reordering = enable_reordering
+        self.enable_bogus_states = enable_bogus_states
+    
+    def _can_reorder(self, stmt1: Statement, stmt2: Statement) -> bool:
+        """
+        Check if two statements can be safely reordered
+        Based on data dependency analysis
+        """
+        # If either has control flow, cannot reorder
+        if stmt1.has_control_flow or stmt2.has_control_flow:
+            return False
+        
+        # Check for write-after-read (WAR) dependency
+        # stmt1 writes to var that stmt2 reads
+        vars_written_by_stmt1 = {var for _, var in stmt1.declares_vars}
+        if vars_written_by_stmt1 & stmt2.uses_vars:
+            return False
+        
+        # Check for read-after-write (RAW) dependency  
+        # stmt2 writes to var that stmt1 reads
+        vars_written_by_stmt2 = {var for _, var in stmt2.declares_vars}
+        if vars_written_by_stmt2 & stmt1.uses_vars:
+            return False
+        
+        # Check for write-after-write (WAW) dependency
+        # Both write to same variable
+        if vars_written_by_stmt1 & vars_written_by_stmt2:
+            return False
+        
+        # No dependencies - safe to reorder
+        return True
+    
+    def _reorder_statements(self, statements: List[Statement]) -> List[Statement]:
+        """Reorder independent statements"""
+        if not self.enable_reordering or len(statements) < 2:
+            return statements
+        
+        # Simple greedy reordering
+        reordered = statements.copy()
+        
+        for _ in range(len(reordered) // 2):
+            i = RandomGenerator.random_int(0, len(reordered) - 2)
+            
+            if self._can_reorder(reordered[i], reordered[i + 1]):
+                # Swap
+                reordered[i], reordered[i + 1] = reordered[i + 1], reordered[i]
+        
+        return reordered
+    
+    def flatten(self, stmts: List[str], indent_level: int = 1) -> str:
+        """Enhanced flatten with reordering"""
+        if len(stmts) < 2:
+            return "\n".join(stmts)
+        
+        # Parse statements
+        statements = [Statement(s) for s in stmts]
+        
+        # Analyze control flow
+        analyzer = ControlFlowAnalyzer(statements)
+        can_flatten, reason = analyzer.can_flatten()
+        
+        if not can_flatten:
+            return "\n".join(stmts)
+        
+        # Reorder if enabled
+        if self.enable_reordering:
+            statements = self._reorder_statements(statements)
+        
+        # Extract all variable declarations
+        all_declarations = analyzer.extract_all_declarations()
+        
+        # Generate state IDs
+        state_ids = self._generate_state_ids(len(statements))
+        
+        # Build flattened code
+        return self._build_state_machine(
+            statements, 
+            state_ids, 
+            all_declarations, 
+            indent_level
+        )
+
+
+# Backward compatibility
+__all__ = [
+    'ControlFlowFlattener',
+    'AdvancedControlFlowFlattener',
+    'OpaquePredicateGenerator',
+    'Statement',
+    'ControlFlowAnalyzer'
+]

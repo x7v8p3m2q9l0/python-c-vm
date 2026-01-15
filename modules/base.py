@@ -1,12 +1,8 @@
-"""
-Base module - Core classes and constants
-Enhanced with additional functionality
-"""
 from enum import Enum
 from typing import Optional
 import time
 
-VERSION = "6.0.1" # bump
+VERSION = "6.0.2" # bump
 MAGIC_HEADER = b"PY2C"
 CONTAINER_VERSION = 2
 

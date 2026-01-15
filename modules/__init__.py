@@ -68,14 +68,12 @@ from .security_monitor import (
     SecurityMonitor
 )
 
-# NEW: Ultimate Security
 from .security_v2 import (
     UltimateSecurityMonitor,
     ThreatLevel,
     SecurityEvent
 )
 
-# Memory loading
 from .memory_loader import (
     MemoryLoader
 )
